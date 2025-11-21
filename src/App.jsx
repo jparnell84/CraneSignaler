@@ -2,22 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import CameraView from './components/CameraView';
 import HUD from './components/HUD';
 import AssessmentDrill from './components/AssessmentDrill';
-
-// --- 1. UTILITY: Script Loader for MediaPipe ---
-// Since we can't use npm imports in this environment, we inject the scripts dynamically.
-const useMediaPipeScript = (url) => {
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    const script = document.createElement('script');
-    script.src = url;
-    script.async = true;
-    script.crossOrigin = "anonymous";
-    script.onload = () => setLoaded(true);
-    document.body.appendChild(script);
-    return () => { document.body.removeChild(script); };
-  }, [url]);
-  return loaded;
-};
+import VoiceSubtitle from './components/VoiceSubtitle';
 
 // --- 2. MATH & SIGNAL LOGIC (Merged from signals.js) ---
 const calculateAngle = (a, b, c) => {
@@ -81,10 +66,7 @@ const SIGNAL_RULES = {
 
 // --- 3. MAIN COMPONENT ---
 const App = () => {
-  // Load external scripts
-  const holisticLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js");
-  const cameraUtilsLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
-  const drawingUtilsLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js");
+  const [holisticLoaded, setHolisticLoaded] = useState(false);
 
   const [mode, setMode] = useState('training'); // 'training' or 'assessment'
   const [detectedSignal, setDetectedSignal] = useState('WAITING...');
@@ -96,139 +78,125 @@ const App = () => {
   const [drillSuccess, setDrillSuccess] = useState(false);
   const [isAssessing, setIsAssessing] = useState(false);
 
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const cameraRef = useRef(null);
+  // Process detections forwarded from CameraView (CameraView handles drawing)
+  const handleDetections = useCallback((results) => {
+    if (!results || !results.poseLandmarks) return;
 
-  // Process Results
-  const onResults = useCallback((results) => {
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
+    let activeSignal = "NONE";
+    let thumbStatus = "NONE";
+    let angleDebug = 0;
 
-    const videoWidth = video.videoWidth;
-    const videoHeight = video.videoHeight;
+    try {
+      const rightShoulder = results.poseLandmarks[12];
+      const rightElbow = results.poseLandmarks[14];
+      const rightWrist = results.poseLandmarks[16];
+      const leftShoulder = results.poseLandmarks[11];
+      const leftElbow = results.poseLandmarks[13];
+      const leftWrist = results.poseLandmarks[15];
 
-    // Prevent drawing if dimensions are zero
-    if (videoWidth === 0 || videoHeight === 0) return;
+      const rAngle = calculateAngle(rightShoulder, rightElbow, rightWrist);
+      const lAngle = calculateAngle(leftShoulder, leftElbow, leftWrist);
+      angleDebug = Math.round(rAngle || lAngle || 0);
 
-    const canvasCtx = canvas.getContext('2d');
-    canvas.width = videoWidth;
-    canvas.height = videoHeight;
-    
-    canvasCtx.save();
-    canvasCtx.clearRect(0, 0, videoWidth, videoHeight);
-    
-    // Draw Video
-    canvasCtx.drawImage(results.image, 0, 0, videoWidth, videoHeight);
+      if (results.leftHandLandmarks) thumbStatus = detectThumb(results.leftHandLandmarks);
+      else if (results.rightHandLandmarks) thumbStatus = detectThumb(results.rightHandLandmarks);
+    } catch (e) {}
 
-    // Draw Landmarks (Accessing global window object since scripts are loaded)
-    if (window.drawConnectors && window.drawLandmarks) {
-      const { POSE_CONNECTIONS, HAND_CONNECTIONS } = window;
-      window.drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#64748b', lineWidth: 2});
-      window.drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#cbd5e1', lineWidth: 1, radius: 3});
-      window.drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, {color: '#eab308', lineWidth: 2});
-      window.drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, {color: '#eab308', lineWidth: 2});
+    if (SIGNAL_RULES.EMERGENCY_STOP(results.poseLandmarks)) {
+      activeSignal = "EMERGENCY STOP";
+    } else if (SIGNAL_RULES.RAISE_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
+      activeSignal = "RAISE BOOM";
+    } else if (SIGNAL_RULES.LOWER_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
+      activeSignal = "LOWER BOOM";
     }
 
-    // Run Logic
-    if (results.poseLandmarks) {
-      let activeSignal = "NONE";
+    setDetectedSignal(activeSignal);
+    setThumbState(thumbStatus);
+    setArmAngle(angleDebug);
 
-      // compute thumb and angle for HUD
-      let thumbStatus = "NONE";
-      let angleDebug = 0;
-      try {
-        const rightShoulder = results.poseLandmarks[12];
-        const rightElbow = results.poseLandmarks[14];
-        const rightWrist = results.poseLandmarks[16];
-        const leftShoulder = results.poseLandmarks[11];
-        const leftElbow = results.poseLandmarks[13];
-        const leftWrist = results.poseLandmarks[15];
-
-        const rAngle = calculateAngle(rightShoulder, rightElbow, rightWrist);
-        const lAngle = calculateAngle(leftShoulder, leftElbow, leftWrist);
-        angleDebug = Math.round(rAngle || lAngle || 0);
-
-        if (results.leftHandLandmarks) thumbStatus = detectThumb(results.leftHandLandmarks);
-        else if (results.rightHandLandmarks) thumbStatus = detectThumb(results.rightHandLandmarks);
-      } catch (e) {
-        // swallow
-      }
-
-      if (SIGNAL_RULES.EMERGENCY_STOP(results.poseLandmarks)) {
-        activeSignal = "EMERGENCY STOP";
-      } else if (SIGNAL_RULES.RAISE_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
-        activeSignal = "RAISE BOOM";
-      } else if (SIGNAL_RULES.LOWER_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
-        activeSignal = "LOWER BOOM";
-      }
-
-      setDetectedSignal(activeSignal);
-      setThumbState(thumbStatus);
-      setArmAngle(angleDebug);
-
-      if (isAssessing && activeSignal === drillTarget) {
-        setDrillSuccess(true);
-        setIsAssessing(false);
-      }
+    if (isAssessing && activeSignal === drillTarget) {
+      setDrillSuccess(true);
+      setIsAssessing(false);
     }
-    canvasCtx.restore();
   }, [isAssessing, drillTarget]);
 
-  // Initialize MediaPipe once scripts are loaded
-  useEffect(() => {
-    if (holisticLoaded && cameraUtilsLoaded && drawingUtilsLoaded && videoRef.current) {
-      const holistic = new window.Holistic({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
-      });
+  // MediaPipe is initialized inside CameraView via useMediaPipe; CameraView will report load status.
 
-      holistic.setOptions({
-        modelComplexity: 1,
-        smoothLandmarks: true,
-      });
+  // Voice recognition state
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [subtitleText, setSubtitleText] = useState('');
+  const recognitionRef = useRef(null);
 
-      holistic.onResults(onResults);
-
-      if (videoRef.current && !cameraRef.current) {
-        cameraRef.current = new window.Camera(videoRef.current, {
-          onFrame: async () => {
-            if (videoRef.current) {
-              await holistic.send({image: videoRef.current});
-            }
-          },
-          width: 1280,
-          height: 720
-        });
-        cameraRef.current.start();
-      }
+  const startListening = () => {
+    const SpeechRec = window.webkitSpeechRecognition || window.SpeechRecognition || null;
+    if (!SpeechRec) {
+      alert('Voice not supported in this browser (Try Chrome)');
+      return;
     }
-  }, [holisticLoaded, cameraUtilsLoaded, drawingUtilsLoaded, onResults]);
+    const r = new SpeechRec();
+    r.continuous = true;
+    r.interimResults = false;
+    r.lang = 'en-US';
+    r.onresult = (event) => {
+      const last = event.results.length - 1;
+      const command = event.results[last][0].transcript.trim();
+      setSubtitleText(`Radio: "${command}"`);
+      setTimeout(() => setSubtitleText(''), 3000);
+      console.log('Voice Command:', command);
+    };
+    r.onerror = () => {};
+    r.start();
+    recognitionRef.current = r;
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current && recognitionRef.current.stop) recognitionRef.current.stop();
+    recognitionRef.current = null;
+  };
+
+  const toggleVoice = () => {
+    if (voiceActive) {
+      stopListening();
+      setVoiceActive(false);
+      setSubtitleText('');
+    } else {
+      startListening();
+      setVoiceActive(true);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col items-center text-white font-sans p-4">
       
       {/* TOP BAR */}
-      <div className="w-full max-w-5xl flex justify-center gap-4 z-10 mb-4">
-        <button 
-          onClick={() => setMode('training')}
-          className={`px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'training' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}
-        >
-          Training Mode
-        </button>
-        <button 
-          onClick={() => setMode('assessment')}
-          className={`px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'assessment' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}
-        >
-          Assessment Mode
-        </button>
+      <div className="w-full max-w-5xl flex justify-between items-center gap-4 z-10 mb-4">
+        <div className="flex">
+          <button 
+            onClick={() => setMode('training')}
+            className={`px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'training' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}
+          >
+            Training Mode
+          </button>
+          <button 
+            onClick={() => setMode('assessment')}
+            className={`ml-2 px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'assessment' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}
+          >
+            Assessment Mode
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 bg-slate-800 px-4 py-2 rounded-lg border border-slate-700">
+          <div className={`w-3 h-3 rounded-full ${voiceActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+          <span className="text-sm font-mono text-slate-400">{voiceActive ? 'Radio: LISTENING' : 'Radio: OFF'}</span>
+          <button onClick={toggleVoice} className="ml-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded">Toggle</button>
+        </div>
       </div>
 
       {/* MAIN VIEWPORT */}
       <div className="relative w-full max-w-5xl aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex items-center justify-center">
         
-        {/* Setup Message if loading */}
-        {(!holisticLoaded || !cameraUtilsLoaded) && (
+          {/* Setup Message if loading */}
+          {!holisticLoaded && (
            <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900 text-white">
              <div className="text-center">
                 <div className="text-2xl font-bold mb-2">Loading AI Models...</div>
@@ -237,8 +205,11 @@ const App = () => {
            </div>
         )}
 
-        {/* Camera and Canvas */}
-        <CameraView videoRef={videoRef} canvasRef={canvasRef} />
+          {/* Camera and Canvas */}
+          <CameraView onDetections={handleDetections} setHolisticLoaded={setHolisticLoaded} />
+
+          {/* Voice subtitle overlay */}
+          <VoiceSubtitle text={subtitleText} />
 
         {/* HUD: TRAINING (presentational component) */}
         <HUD mode={mode} detectedSignal={detectedSignal} thumb={thumbState} angle={armAngle} />
