@@ -1,3 +1,6 @@
+/* Load Inter for a modern UI */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -9,7 +12,15 @@ html, body, #root {
 body {
   margin: 0;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  background: linear-gradient(180deg,#0f172a 0%, #020617 100%);
+  color: #e6eef8;
 }
+
+/* container for app to center and constrain width */
+.app-container { display:flex; flex-direction:column; align-items:center; min-height:100vh; }
+
+/* nicer default button focus */
+button:focus { outline: 2px solid rgba(99,102,241,0.6); outline-offset: 2px; }
 
 /* Custom UI utilities from original single-file UI */
 .glass-panel {

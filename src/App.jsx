@@ -73,6 +73,8 @@ const App = () => {
   const [thumbState, setThumbState] = useState(null);
   const [leftAngle, setLeftAngle] = useState(null);
   const [rightAngle, setRightAngle] = useState(null);
+  const [activeArm, setActiveArm] = useState(null);
+  const [signalProgress, setSignalProgress] = useState(0);
   const [cameraError, setCameraError] = useState(null);
   
   // Assessment State
@@ -86,6 +88,8 @@ const App = () => {
 
     let activeSignal = "NONE";
     let thumbStatus = "NONE";
+    let leftThumb = 'NONE';
+    let rightThumb = 'NONE';
     let lAngle = 0;
     let rAngle = 0;
 
@@ -105,8 +109,11 @@ const App = () => {
       lAngle = Math.round(lAngle || 0);
       rAngle = Math.round(rAngle || 0);
 
-      if (results.leftHandLandmarks) thumbStatus = detectThumb(results.leftHandLandmarks);
-      else if (results.rightHandLandmarks) thumbStatus = detectThumb(results.rightHandLandmarks);
+      if (results.leftHandLandmarks) leftThumb = detectThumb(results.leftHandLandmarks);
+      if (results.rightHandLandmarks) rightThumb = detectThumb(results.rightHandLandmarks);
+      // preserve a simple combined thumb state for legacy HUD display
+      if (leftThumb !== 'NONE') thumbStatus = leftThumb;
+      else if (rightThumb !== 'NONE') thumbStatus = rightThumb;
     } catch (e) {}
 
     // Prefer specific single-arm signals (raise/lower) before the broad emergency-stop
@@ -123,6 +130,24 @@ const App = () => {
     setThumbState(thumbStatus);
     setLeftAngle(lAngle);
     setRightAngle(rAngle);
+    // determine which arm is most likely the active one for calibration highlights
+    let side = null;
+    if (activeSignal === 'RAISE BOOM') {
+      if (leftThumb === 'UP') side = 'left';
+      else if (rightThumb === 'UP') side = 'right';
+      else side = (rAngle > lAngle) ? 'right' : 'left';
+    } else if (activeSignal === 'LOWER BOOM') {
+      if (leftThumb === 'DOWN') side = 'left';
+      else if (rightThumb === 'DOWN') side = 'right';
+      else side = (rAngle > lAngle) ? 'right' : 'left';
+    } else if (activeSignal === 'EMERGENCY STOP') {
+      side = 'both';
+    } else {
+      side = null;
+    }
+    setActiveArm(side);
+    // reset progress for now (temporal confirmation not implemented yet)
+    setSignalProgress(0);
 
     if (isAssessing && activeSignal === drillTarget) {
       setDrillSuccess(true);
@@ -176,29 +201,29 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col items-center text-white font-sans p-4">
-      
-      {/* TOP BAR */}
-      <div className="w-full max-w-5xl flex justify-between items-center gap-4 z-10 mb-4">
-        <div className="flex">
-          <button 
-            onClick={() => setMode('training')}
-            className={`px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'training' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}
-          >
-            Training Mode
-          </button>
-          <button 
-            onClick={() => setMode('assessment')}
-            className={`ml-2 px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'assessment' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}
-          >
-            Assessment Mode
-          </button>
-        </div>
+    <div className="app-container min-h-screen w-full text-white font-sans p-4">
+      <div className="w-full px-4 py-3">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setMode('training')}
+              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${mode === 'training' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+            >
+              Training
+            </button>
+            <button 
+              onClick={() => setMode('assessment')}
+              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${mode === 'assessment' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+            >
+              Assessment
+            </button>
+          </div>
 
-        <div className="flex items-center gap-3 bg-slate-800 px-4 py-2 rounded-lg border border-slate-700">
-          <div className={`w-3 h-3 rounded-full ${voiceActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
-          <span className="text-sm font-mono text-slate-400">{voiceActive ? 'Radio: LISTENING' : 'Radio: OFF'}</span>
-          <button onClick={toggleVoice} className="ml-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded">Toggle</button>
+          <div className="flex items-center gap-3">
+            <div className={`w-3 h-3 rounded-full ${voiceActive ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`}></div>
+            <span className="text-sm font-mono text-slate-300 mr-2">{voiceActive ? 'Radio: LISTENING' : 'Radio: OFF'}</span>
+            <button onClick={toggleVoice} className="ml-1 text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-md">Toggle</button>
+          </div>
         </div>
       </div>
 
@@ -232,7 +257,7 @@ const App = () => {
           <VoiceSubtitle text={subtitleText} />
 
         {/* HUD: TRAINING (presentational component) */}
-        <HUD mode={mode} detectedSignal={detectedSignal} thumb={thumbState} leftAngle={leftAngle} rightAngle={rightAngle} />
+        <HUD mode={mode} detectedSignal={detectedSignal} thumb={thumbState} leftAngle={leftAngle} rightAngle={rightAngle} activeArm={activeArm} progress={signalProgress} />
 
         {/* HUD: ASSESSMENT (presentational component) */}
         {mode === 'assessment' && (
