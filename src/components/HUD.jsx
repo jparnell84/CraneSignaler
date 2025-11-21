@@ -1,31 +1,45 @@
 import React from 'react';
 
-export default function HUD({ mode, detectedSignal, thumb, angle }) {
-  return (
-    <>
-      {mode === 'training' && (
-        <div className="absolute top-6 left-6 p-6 rounded-2xl glass-panel w-64 sm:w-80">
-          <h2 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-2">Real-Time Feedback</h2>
-          <div className={`text-2xl sm:text-3xl font-black mb-1 ${detectedSignal === 'NONE' ? 'text-white' : detectedSignal === 'EMERGENCY STOP' ? 'text-red-500' : 'text-green-400'}`}>
-            {detectedSignal}
-          </div>
-          <div className="text-sm text-slate-400">
-            {detectedSignal === 'NONE' ? "Align body to start" : "Signal Detected"}
-          </div>
+// HUD displays a compact overlay with current mode, detected signal, and an arm angle.
+const HUD = ({ mode, detectedSignal, thumb, leftAngle, rightAngle }) => {
+  const cardStyle = "absolute top-4 left-4 p-4 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-600 shadow-xl w-72";
 
-          <div className="mt-4 space-y-2">
-            <div className="flex justify-between text-sm border-b border-slate-700 pb-2">
-              <span className="text-slate-400">Thumb</span>
-              <span className="font-mono font-bold text-yellow-500">{thumb ?? '--'}</span>
-            </div>
-            <div className="flex justify-between text-sm border-b border-slate-700 pb-2">
-              <span className="text-slate-400">Arm Angle</span>
-              <span className="font-mono font-bold text-white">{angle ? `${Math.round(angle)}°` : '--°'}</span>
-            </div>
+  if (mode === 'assessment') return null;
+
+  const displayLeft = typeof leftAngle === 'number' && !Number.isNaN(leftAngle) ? `${Math.round(leftAngle)}°` : '—';
+  const displayRight = typeof rightAngle === 'number' && !Number.isNaN(rightAngle) ? `${Math.round(rightAngle)}°` : '—';
+  const statusClass = !detectedSignal || detectedSignal === 'NONE' || detectedSignal === 'WAITING...' ? 'text-white' : 'text-green-500';
+
+  return (
+    <div className={cardStyle}>
+      <h1 className="text-xl font-bold text-yellow-400 mb-1">Signal Evaluator</h1>
+      <p className="text-slate-300 text-xs mb-4">Mode: <span className="font-mono text-white">Training</span></p>
+
+      <div className="space-y-2">
+        <div className="flex justify-between text-sm">
+          <span className="text-slate-400">Left Arm Angle:</span>
+          <span className="font-mono font-bold text-white">{displayLeft}</span>
+        </div>
+
+        <div className="flex justify-between text-sm">
+          <span className="text-slate-400">Right Arm Angle:</span>
+          <span className="font-mono font-bold text-white">{displayRight}</span>
+        </div>
+
+        <div className="flex justify-between text-sm">
+          <span className="text-slate-400">Thumb:</span>
+          <span className="font-mono font-bold text-white">{thumb || '—'}</span>
+        </div>
+
+        <div className="mt-3 pt-3 border-t border-slate-600">
+          <p className="text-xs text-slate-500 uppercase tracking-wider">Current Signal</p>
+          <div className={`mt-1 text-2xl font-bold ${statusClass}`}>
+            {detectedSignal || 'WAITING...'}
           </div>
         </div>
-      )}
-    </>
+      </div>
+    </div>
   );
-}
+};
 
+export default HUD;

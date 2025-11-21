@@ -71,7 +71,8 @@ const App = () => {
   const [mode, setMode] = useState('training'); // 'training' or 'assessment'
   const [detectedSignal, setDetectedSignal] = useState('WAITING...');
   const [thumbState, setThumbState] = useState(null);
-  const [armAngle, setArmAngle] = useState(null);
+  const [leftAngle, setLeftAngle] = useState(null);
+  const [rightAngle, setRightAngle] = useState(null);
   const [cameraError, setCameraError] = useState(null);
   
   // Assessment State
@@ -85,7 +86,8 @@ const App = () => {
 
     let activeSignal = "NONE";
     let thumbStatus = "NONE";
-    let angleDebug = 0;
+    let lAngle = 0;
+    let rAngle = 0;
 
     try {
       const rightShoulder = results.poseLandmarks[12];
@@ -95,9 +97,13 @@ const App = () => {
       const leftElbow = results.poseLandmarks[13];
       const leftWrist = results.poseLandmarks[15];
 
-      const rAngle = calculateAngle(rightShoulder, rightElbow, rightWrist);
-      const lAngle = calculateAngle(leftShoulder, leftElbow, leftWrist);
-      angleDebug = Math.round(rAngle || lAngle || 0);
+      rAngle = calculateAngle(rightShoulder, rightElbow, rightWrist);
+      lAngle = calculateAngle(leftShoulder, leftElbow, leftWrist);
+      // prefer showing the arm currently extended (non-zero)
+      const preferred = rAngle || lAngle || 0;
+      // keep rounded debug values
+      lAngle = Math.round(lAngle || 0);
+      rAngle = Math.round(rAngle || 0);
 
       if (results.leftHandLandmarks) thumbStatus = detectThumb(results.leftHandLandmarks);
       else if (results.rightHandLandmarks) thumbStatus = detectThumb(results.rightHandLandmarks);
@@ -113,7 +119,8 @@ const App = () => {
 
     setDetectedSignal(activeSignal);
     setThumbState(thumbStatus);
-    setArmAngle(angleDebug);
+    setLeftAngle(lAngle);
+    setRightAngle(rAngle);
 
     if (isAssessing && activeSignal === drillTarget) {
       setDrillSuccess(true);
@@ -223,7 +230,7 @@ const App = () => {
           <VoiceSubtitle text={subtitleText} />
 
         {/* HUD: TRAINING (presentational component) */}
-        <HUD mode={mode} detectedSignal={detectedSignal} thumb={thumbState} angle={armAngle} />
+        <HUD mode={mode} detectedSignal={detectedSignal} thumb={thumbState} leftAngle={leftAngle} rightAngle={rightAngle} />
 
         {/* HUD: ASSESSMENT (presentational component) */}
         {mode === 'assessment' && (
