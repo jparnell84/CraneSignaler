@@ -30,8 +30,14 @@ body {
 canvas {
   transform: scaleX(-1);
 }
+/* Keep the video element available to MediaPipe (avoid display:none) while visually hiding it */
 video {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
   transform: scaleX(-1);
-  display: none;
+  opacity: 0;
+  pointer-events: none;
 }
 
