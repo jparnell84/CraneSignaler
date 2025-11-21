@@ -1,284 +1,168 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { drawConnectors, drawLandmarks } from '@mediapipe/drawing_utils';
+import { POSE_CONNECTIONS, HAND_CONNECTIONS } from '@mediapipe/holistic';
+
+// Components
 import CameraView from './components/CameraView';
 import HUD from './components/HUD';
 import AssessmentDrill from './components/AssessmentDrill';
 import VoiceSubtitle from './components/VoiceSubtitle';
 
-// --- 2. MATH & SIGNAL LOGIC (Merged from signals.js) ---
-const calculateAngle = (a, b, c) => {
-  if(!a || !b || !c) return 0;
-  const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-  let angle = Math.abs(radians * 180.0 / Math.PI);
-  if (angle > 180.0) angle = 360 - angle;
-  return angle;
-};
+// Core Logic
+import { SIGNAL_RULES } from './core/signals';
+import { calculateAngle } from './core/geometry';
+import { VoiceManager } from './core/voice';
 
-const detectThumb = (handLandmarks) => {
-  if (!handLandmarks) return "NONE";
-  const thumbTip = handLandmarks[4];
-  const indexMCP = handLandmarks[5];
-  const wrist = handLandmarks[0];
-  
-  // Safety check
-  if (!thumbTip || !indexMCP || !wrist) return "NONE";
+// Hooks
+import { useMediaPipe } from './hooks/useMediaPipe';
 
-  const tipToKnuckle = indexMCP.y - thumbTip.y; 
-  const threshold = Math.abs(wrist.y - indexMCP.y) * 0.5; 
-
-  if (tipToKnuckle > threshold) return "UP";
-  if (tipToKnuckle < -threshold) return "DOWN";
-  return "NEUTRAL";
-};
-
-const SIGNAL_RULES = {
-  'EMERGENCY_STOP': (pose) => {
-    if (!pose) return false;
-    // Rule: Both arms extended (>145deg)
-    const rightArm = calculateAngle(pose[12], pose[14], pose[16]);
-    const leftArm  = calculateAngle(pose[11], pose[13], pose[15]);
-    return rightArm > 145 && leftArm > 145; 
-  },
-  'RAISE_BOOM': (pose, leftHand, rightHand) => {
-    if (!pose) return false;
-    // Rule: One arm extended + Thumb Up
-    const leftThumb = detectThumb(leftHand);
-    const rightThumb = detectThumb(rightHand);
-    
-    const rightArm = calculateAngle(pose[12], pose[14], pose[16]);
-    const leftArm  = calculateAngle(pose[11], pose[13], pose[15]);
-    const armExtended = rightArm > 130 || leftArm > 130; // Slightly looser for comfort
-
-    return armExtended && (leftThumb === 'UP' || rightThumb === 'UP');
-  },
-  'LOWER_BOOM': (pose, leftHand, rightHand) => {
-    if (!pose) return false;
-    // Rule: One arm extended + Thumb Down
-    const leftThumb = detectThumb(leftHand);
-    const rightThumb = detectThumb(rightHand);
-    
-    const rightArm = calculateAngle(pose[12], pose[14], pose[16]);
-    const leftArm  = calculateAngle(pose[11], pose[13], pose[15]);
-    const armExtended = rightArm > 130 || leftArm > 130;
-
-    return armExtended && (leftThumb === 'DOWN' || rightThumb === 'DOWN');
-  }
-};
-
-// --- 3. MAIN COMPONENT ---
 const App = () => {
-  const [holisticLoaded, setHolisticLoaded] = useState(false);
-
-  const [mode, setMode] = useState('training'); // 'training' or 'assessment'
+  // -- State --
+  const [mode, setMode] = useState('training'); 
   const [detectedSignal, setDetectedSignal] = useState('WAITING...');
-  const [thumbState, setThumbState] = useState(null);
-  const [leftAngle, setLeftAngle] = useState(null);
-  const [rightAngle, setRightAngle] = useState(null);
-  const [activeArm, setActiveArm] = useState(null);
-  const [signalProgress, setSignalProgress] = useState(0);
-  const [cameraError, setCameraError] = useState(null);
-  
-  // Assessment State
+  const [leftAngle, setLeftAngle] = useState(0);
+  const [rightAngle, setRightAngle] = useState(0);
   const [drillTarget, setDrillTarget] = useState(null);
   const [drillSuccess, setDrillSuccess] = useState(false);
-  const [isAssessing, setIsAssessing] = useState(false);
 
-  // Process detections forwarded from CameraView (CameraView handles drawing)
-  const handleDetections = useCallback((results) => {
-    if (!results || !results.poseLandmarks) return;
+  const [voiceCommand, setVoiceCommand] = useState('');
+  const [isVoiceActive, setIsVoiceActive] = useState(false);
+  const voiceManagerRef = useRef(null);
 
-    let activeSignal = "NONE";
-    let thumbStatus = "NONE";
-    let leftThumb = 'NONE';
-    let rightThumb = 'NONE';
-    let lAngle = 0;
-    let rAngle = 0;
+  // Refs for MediaPipe
+  const webcamRef = useRef(null);
+  const canvasRef = useRef(null);
 
-    try {
-      const rightShoulder = results.poseLandmarks[12];
-      const rightElbow = results.poseLandmarks[14];
-      const rightWrist = results.poseLandmarks[16];
-      const leftShoulder = results.poseLandmarks[11];
-      const leftElbow = results.poseLandmarks[13];
-      const leftWrist = results.poseLandmarks[15];
+  // --- HISTORY BUFFERS FOR MOTION DETECTION ---
+  // We store the last 30 frames of Index Finger Tip (Landmark 8)
+  // This is required for 'HOIST LOAD' and 'LOWER LOAD' to detect circular motion
+  const leftHandHistory = useRef([]);
+  const rightHandHistory = useRef([]);
 
-      rAngle = calculateAngle(rightShoulder, rightElbow, rightWrist);
-      lAngle = calculateAngle(leftShoulder, leftElbow, leftWrist);
-      // prefer showing the arm currently extended (non-zero)
-      const preferred = rAngle || lAngle || 0;
-      // keep rounded debug values
-      lAngle = Math.round(lAngle || 0);
-      rAngle = Math.round(rAngle || 0);
-
-      if (results.leftHandLandmarks) leftThumb = detectThumb(results.leftHandLandmarks);
-      if (results.rightHandLandmarks) rightThumb = detectThumb(results.rightHandLandmarks);
-      // preserve a simple combined thumb state for legacy HUD display
-      if (leftThumb !== 'NONE') thumbStatus = leftThumb;
-      else if (rightThumb !== 'NONE') thumbStatus = rightThumb;
-    } catch (e) {}
-
-    // Prefer specific single-arm signals (raise/lower) before the broad emergency-stop
-    // This prevents LOWER_BOOM from being overridden when the user intentionally signals lower.
-    if (SIGNAL_RULES.RAISE_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
-      activeSignal = "RAISE BOOM";
-    } else if (SIGNAL_RULES.LOWER_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
-      activeSignal = "LOWER BOOM";
-    } else if (SIGNAL_RULES.EMERGENCY_STOP(results.poseLandmarks)) {
-      activeSignal = "EMERGENCY STOP";
-    }
-
-    setDetectedSignal(activeSignal);
-    setThumbState(thumbStatus);
-    setLeftAngle(lAngle);
-    setRightAngle(rAngle);
-    // determine which arm is most likely the active one for calibration highlights
-    let side = null;
-    if (activeSignal === 'RAISE BOOM') {
-      if (leftThumb === 'UP') side = 'left';
-      else if (rightThumb === 'UP') side = 'right';
-      else side = (rAngle > lAngle) ? 'right' : 'left';
-    } else if (activeSignal === 'LOWER BOOM') {
-      if (leftThumb === 'DOWN') side = 'left';
-      else if (rightThumb === 'DOWN') side = 'right';
-      else side = (rAngle > lAngle) ? 'right' : 'left';
-    } else if (activeSignal === 'EMERGENCY STOP') {
-      side = 'both';
-    } else {
-      side = null;
-    }
-    setActiveArm(side);
-    // reset progress for now (temporal confirmation not implemented yet)
-    setSignalProgress(0);
-
-    if (isAssessing && activeSignal === drillTarget) {
-      setDrillSuccess(true);
-      setIsAssessing(false);
-    }
-  }, [isAssessing, drillTarget]);
-
-  // MediaPipe is initialized inside CameraView via useMediaPipe; CameraView will report load status.
-
-  // Voice recognition state
-  const [voiceActive, setVoiceActive] = useState(false);
-  const [subtitleText, setSubtitleText] = useState('');
-  const recognitionRef = useRef(null);
-
-  const startListening = () => {
-    const SpeechRec = window.webkitSpeechRecognition || window.SpeechRecognition || null;
-    if (!SpeechRec) {
-      alert('Voice not supported in this browser (Try Chrome)');
-      return;
-    }
-    const r = new SpeechRec();
-    r.continuous = true;
-    r.interimResults = false;
-    r.lang = 'en-US';
-    r.onresult = (event) => {
-      const last = event.results.length - 1;
-      const command = event.results[last][0].transcript.trim();
-      setSubtitleText(`Radio: "${command}"`);
-      setTimeout(() => setSubtitleText(''), 3000);
-      console.log('Voice Command:', command);
-    };
-    r.onerror = () => {};
-    r.start();
-    recognitionRef.current = r;
-  };
-
-  const stopListening = () => {
-    if (recognitionRef.current && recognitionRef.current.stop) recognitionRef.current.stop();
-    recognitionRef.current = null;
-  };
+  // -- Voice Init --
+  useEffect(() => {
+    voiceManagerRef.current = new VoiceManager((cmd) => {
+        setVoiceCommand(cmd);
+        if (cmd.includes('training')) setMode('training');
+        if (cmd.includes('assessment') || cmd.includes('test')) setMode('assessment');
+    });
+  }, []);
 
   const toggleVoice = () => {
-    if (voiceActive) {
-      stopListening();
-      setVoiceActive(false);
-      setSubtitleText('');
+    if (isVoiceActive) {
+        voiceManagerRef.current.stop();
+        setIsVoiceActive(false);
     } else {
-      startListening();
-      setVoiceActive(true);
+        const started = voiceManagerRef.current.start();
+        if (started) setIsVoiceActive(true);
+        else alert("Voice recognition not supported.");
     }
+  };
+
+  // -- HELPER: Update History Buffers --
+  const updateHistory = (handLandmarks, historyRef) => {
+    if (handLandmarks) {
+        // Track Index Finger Tip (Landmark 8)
+        const tip = handLandmarks[8];
+        historyRef.current.push({ x: tip.x, y: tip.y });
+        // Keep only last 30 frames (approx 1 second of motion)
+        if (historyRef.current.length > 30) historyRef.current.shift();
+    } else {
+        // If hand is lost, clear history to prevent "teleporting" artifacts
+        historyRef.current = [];
+    }
+  };
+
+  // -- MediaPipe Callback --
+  const onResults = useCallback((results) => {
+    if (!webcamRef.current || !canvasRef.current || !webcamRef.current.video) return;
+
+    const videoWidth = webcamRef.current.video.videoWidth;
+    const videoHeight = webcamRef.current.video.videoHeight;
+    
+    const canvasCtx = canvasRef.current.getContext('2d');
+    canvasRef.current.width = videoWidth;
+    canvasRef.current.height = videoHeight;
+    
+    canvasCtx.save();
+    canvasCtx.clearRect(0, 0, videoWidth, videoHeight);
+    canvasCtx.drawImage(results.image, 0, 0, videoWidth, videoHeight);
+
+    drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: 'rgba(100, 116, 139, 0.5)', lineWidth: 2});
+    drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#cbd5e1', lineWidth: 1, radius: 2});
+    drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, {color: '#eab308', lineWidth: 2});
+    drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, {color: '#eab308', lineWidth: 2});
+
+    if (results.poseLandmarks) {
+      const pose = results.poseLandmarks;
+      
+      // 1. Update Motion History (Critical for dynamic signals)
+      updateHistory(results.leftHandLandmarks, leftHandHistory);
+      updateHistory(results.rightHandLandmarks, rightHandHistory);
+
+      // 2. UI Updates
+      setLeftAngle(calculateAngle(pose[11], pose[13], pose[15]));
+      setRightAngle(calculateAngle(pose[12], pose[14], pose[16]));
+
+      // 3. Check Signals
+      let activeSignal = "NONE";
+      for (const sig of Object.keys(SIGNAL_RULES)) {
+          // PASS HISTORY TO RULES
+          if (SIGNAL_RULES[sig](
+              pose, 
+              results.leftHandLandmarks, 
+              results.rightHandLandmarks,
+              leftHandHistory.current,
+              rightHandHistory.current
+          )) {
+              activeSignal = sig;
+              break;
+          }
+      }
+      setDetectedSignal(activeSignal);
+
+      if (mode === 'assessment' && activeSignal === drillTarget) {
+        setDrillSuccess(true);
+      }
+    }
+    canvasCtx.restore();
+  }, [mode, drillTarget]);
+
+  const isLoaded = useMediaPipe(webcamRef, onResults);
+
+  const startDrill = () => {
+      const keys = Object.keys(SIGNAL_RULES);
+      const randomSig = keys[Math.floor(Math.random() * keys.length)];
+      setDrillTarget(randomSig);
+      setDrillSuccess(false);
   };
 
   return (
-    <div className="app-container min-h-screen w-full text-white font-sans p-4">
-      <div className="w-full px-4 py-3">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={() => setMode('training')}
-              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${mode === 'training' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'}`}
-            >
-              Training
-            </button>
-            <button 
-              onClick={() => setMode('assessment')}
-              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${mode === 'assessment' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'}`}
-            >
-              Assessment
-            </button>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className={`w-3 h-3 rounded-full ${voiceActive ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`}></div>
-            <span className="text-sm font-mono text-slate-300 mr-2">{voiceActive ? 'Radio: LISTENING' : 'Radio: OFF'}</span>
-            <button onClick={toggleVoice} className="ml-1 text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-md">Toggle</button>
-          </div>
-        </div>
-      </div>
-
-      {/* MAIN VIEWPORT */}
-      <div className="relative w-full max-w-5xl aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex items-center justify-center">
-        
-          {/* Setup Message if loading */}
-          {!holisticLoaded && (
-           <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900 text-white">
-             <div className="text-center">
-                <div className="text-2xl font-bold mb-2">Loading AI Models...</div>
-                <div className="text-slate-400">Please allow camera access when prompted.</div>
-             </div>
-           </div>
-        )}
-
-          {/* Camera and Canvas */}
-          <CameraView onDetections={handleDetections} setHolisticLoaded={setHolisticLoaded} setCameraError={setCameraError} />
-
-          {cameraError && (
-            <div className="absolute inset-0 flex items-center justify-center z-30 bg-black/60 text-white p-6 text-center">
-              <div>
-                <div className="text-xl font-bold mb-2">Camera Error</div>
-                <div className="text-sm text-slate-300 mb-4">{cameraError}</div>
-                <div className="text-sm text-slate-400">If the camera is in use, close other apps or tabs using it and reload this page.</div>
-              </div>
-            </div>
-          )}
-
-          {/* Voice subtitle overlay */}
-          <VoiceSubtitle text={subtitleText} />
-
-        {/* HUD: TRAINING (presentational component) */}
-        <HUD mode={mode} detectedSignal={detectedSignal} thumb={thumbState} leftAngle={leftAngle} rightAngle={rightAngle} activeArm={activeArm} progress={signalProgress} />
-
-        {/* HUD: ASSESSMENT (presentational component) */}
-        {mode === 'assessment' && (
-          <AssessmentDrill
-            drillTarget={drillTarget}
-            drillSuccess={drillSuccess}
-            isAssessing={isAssessing}
-            onStart={() => {
-              const targets = ['EMERGENCY STOP', 'RAISE BOOM', 'LOWER BOOM'];
-              setDrillTarget(targets[Math.floor(Math.random() * targets.length)]);
-              setIsAssessing(true);
-              setDrillSuccess(false);
-            }}
-            onReset={() => setDrillTarget(null)}
-          />
-        )}
-      </div>
+    <div className="min-h-screen bg-slate-900 flex flex-col items-center text-white font-sans p-4">
       
-      <div className="mt-4 text-slate-500 text-sm max-w-lg text-center">
-        If the camera does not start, please ensure you have given permission and are using a browser that supports WebAssembly.
+      <div className="w-full max-w-5xl flex justify-between items-center mb-4 z-10">
+        <div className="flex gap-4">
+            <button onClick={() => setMode('training')} className={`px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'training' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}>Training</button>
+            <button onClick={() => setMode('assessment')} className={`px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'assessment' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}>Assessment</button>
+        </div>
+        <button onClick={toggleVoice} className={`flex items-center gap-2 px-4 py-2 rounded-lg border ${isVoiceActive ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
+            <div className={`w-2 h-2 rounded-full ${isVoiceActive ? 'bg-red-500 animate-pulse' : 'bg-slate-500'}`} />
+            <span className="text-sm font-mono">Mic {isVoiceActive ? 'ON' : 'OFF'}</span>
+        </button>
       </div>
+
+      <div className="relative">
+          <CameraView ref={{ webcamRef, canvasRef }} isLoaded={isLoaded} />
+          <HUD mode={mode} leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} />
+          <AssessmentDrill mode={mode} target={drillTarget} success={drillSuccess} onStart={startDrill} onNext={() => setDrillTarget(null)} />
+          <VoiceSubtitle text={voiceCommand} />
+      </div>
+
+      {mode === 'training' && (
+        <div className="mt-6 px-6 py-3 bg-slate-800 rounded-full border border-slate-700 text-slate-400 text-sm">
+            Try: <span className="text-yellow-400 font-bold">Hoist Load</span> (Finger UP + Motion) or <span className="text-yellow-400 font-bold">Main Hoist</span> (Fist on Head)
+        </div>
+      )}
     </div>
   );
 };

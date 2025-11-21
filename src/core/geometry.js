@@ -12,37 +12,7 @@ export const calculateAngle = (a, b, c) => {
     return angle;
 };
 
-// Detects if the thumb is pointing UP, DOWN, or NEUTRAL relative to the hand.
-// Uses the distance between the Thumb Tip and the Index Knuckle (MCP).
-export const detectThumb = (handLandmarks) => {
-    if (!handLandmarks) return "NONE";
-
-    const thumbTip = handLandmarks[4];
-    const indexMCP = handLandmarks[5]; // Index Finger Knuckle
-    const wrist = handLandmarks[0];
-
-    // Safety check to prevent crashes if MediaPipe loses track momentarily
-    if (!thumbTip || !indexMCP || !wrist) return "NONE";
-
-    // Calculate vertical distance (Y-axis)
-    // Note: In computer vision, Y increases as you go DOWN the screen.
-    // So, if Tip Y < Knuckle Y, the Tip is visually HIGHER.
-    const tipToKnuckle = indexMCP.y - thumbTip.y; 
-    
-    // Dynamic threshold: 50% of the distance between Wrist and Knuckle.
-    // This ensures it works whether the user is close to or far from the camera.
-    const threshold = Math.abs(wrist.y - indexMCP.y) * 0.5; 
-
-    if (tipToKnuckle > threshold) {
-        return "UP";
-    } else if (tipToKnuckle < -threshold) {
-        return "DOWN";
-    }
-    
-    return "NEUTRAL";
-};
-
-// Calculates Euclidean distance between two points (useful for "Dog Everything" signal)
+// Calculates 2D Euclidean distance between two points
 export const calculateDistance = (point1, point2) => {
     if (!point1 || !point2) return 1.0; // Return high distance if missing
     return Math.sqrt(
@@ -50,15 +20,111 @@ export const calculateDistance = (point1, point2) => {
     );
 };
 
-// Angle between the vector p1->p2 and the vertical-up direction (0,-1).
-// Returns degrees in [0,180]. 0 means vector points up, 90 means horizontal, 180 means down.
-export const angleToVertical = (p1, p2) => {
-    if (!p1 || !p2) return 0;
-    const vx = p2.x - p1.x;
-    const vy = p2.y - p1.y;
-    const ang = Math.atan2(vy, vx); // angle of vector in radians
-    const upAng = -Math.PI / 2; // angle of (0,-1)
-    let deg = Math.abs((ang - upAng) * 180 / Math.PI);
-    if (deg > 180) deg = 360 - deg;
-    return deg;
+// Detects if the thumb is pointing UP or DOWN relative to the hand
+export const detectThumb = (handLandmarks) => {
+    if (!handLandmarks) return "NONE";
+
+    const thumbTip = handLandmarks[4];
+    const indexMCP = handLandmarks[5]; // Index Finger Knuckle
+    const wrist = handLandmarks[0];
+
+    if (!thumbTip || !indexMCP || !wrist) return "NONE";
+
+    // Compare Y coordinates (Y increases downwards)
+    const tipToKnuckle = indexMCP.y - thumbTip.y; 
+    
+    // Dynamic threshold based on hand size (distance from wrist to knuckle)
+    const handSize = Math.abs(wrist.y - indexMCP.y);
+    const threshold = handSize * 0.5; 
+
+    if (tipToKnuckle > threshold) return "UP";
+    if (tipToKnuckle < -threshold) return "DOWN";
+    
+    return "NEUTRAL";
+};
+
+// Detects if the Index Finger is pointing UP or DOWN
+export const detectIndexFinger = (handLandmarks) => {
+    if (!handLandmarks) return "NONE";
+    
+    const tip = handLandmarks[8];  // Index Tip
+    const pip = handLandmarks[6];  // Index PIP (Middle joint)
+    const wrist = handLandmarks[0];
+
+    if (!tip || !pip) return "NONE";
+
+    // Dynamic threshold
+    const threshold = Math.abs(wrist.y - pip.y) * 0.2;
+
+    if (tip.y < pip.y - threshold) return "UP";
+    if (tip.y > pip.y + threshold) return "DOWN";
+
+    return "NEUTRAL";
+};
+
+// Checks if a finger is curled. 
+// Returns true if the Tip is closer to the Wrist than the PIP joint is.
+export const isFingerCurled = (landmarks, tipIdx, pipIdx) => {
+    if (!landmarks) return false;
+    const wrist = landmarks[0];
+    const tip = landmarks[tipIdx];
+    const pip = landmarks[pipIdx];
+    
+    const distTipToWrist = calculateDistance(tip, wrist);
+    const distPipToWrist = calculateDistance(pip, wrist);
+    
+    return distTipToWrist < distPipToWrist;
+};
+
+/**
+ * Detects "Repetitive Motion" (Circles, Arcs, Metronomes, Waving).
+ * * THE LOGIC:
+ * We calculate the "Path Efficiency" (Tortuosity).
+ * 1. Calculate the bounding box of the movement history.
+ * 2. Calculate the total distance traveled by the finger.
+ * 3. If the finger traveled a LONG distance, but stayed inside a SMALL box,
+ * it must be moving back and forth or in a circle.
+ */
+export const detectRepetitiveMotion = (history) => {
+    // Need at least 10 frames (~0.3 seconds) to judge motion
+    if (history.length < 10) return false;
+
+    let minX = 1, maxX = 0, minY = 1, maxY = 0;
+    let totalPathLength = 0;
+
+    for (let i = 0; i < history.length; i++) {
+        const p = history[i];
+        
+        // 1. Update Bounding Box
+        if(p.x < minX) minX = p.x;
+        if(p.x > maxX) maxX = p.x;
+        if(p.y < minY) minY = p.y;
+        if(p.y > maxY) maxY = p.y;
+
+        // 2. Sum Path Length
+        if (i > 0) {
+            const prev = history[i-1];
+            totalPathLength += Math.sqrt(Math.pow(p.x - prev.x, 2) + Math.pow(p.y - prev.y, 2));
+        }
+    }
+
+    const boxWidth = maxX - minX;
+    const boxHeight = maxY - minY;
+    
+    // Diagonal of the box (The "Net Displacement" if you moved from corner to corner)
+    const boxDiagonal = Math.sqrt(Math.pow(boxWidth, 2) + Math.pow(boxHeight, 2));
+
+    // FILTER 1: Is there enough movement?
+    // If the box is too small, it's just jitter/noise.
+    // 0.02 is roughly 2% of the screen.
+    if (boxDiagonal < 0.02) return false;
+
+    // FILTER 2: Path Ratio
+    // If you move in a straight line, Ratio ≈ 1.0
+    // If you move in a metronome arc (Left -> Right -> Left), Ratio ≈ 2.0
+    // If you move in a circle, Ratio ≈ 3.0 (Pi)
+    // We set threshold at 1.2 to catch sloppy arcs.
+    const ratio = totalPathLength / boxDiagonal;
+
+    return ratio > 1.2; 
 };

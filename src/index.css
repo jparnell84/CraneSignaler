@@ -12,43 +12,79 @@ html, body, #root {
 body {
   margin: 0;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-  background: linear-gradient(180deg,#0f172a 0%, #020617 100%);
+  background: linear-gradient(180deg, #0f172a 0%, #020617 100%);
   color: #e6eef8;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* container for app to center and constrain width */
-.app-container { display:flex; flex-direction:column; align-items:center; min-height:100vh; }
+/* --- Custom Utilities --- */
 
-/* nicer default button focus */
-button:focus { outline: 2px solid rgba(99,102,241,0.6); outline-offset: 2px; }
-
-/* Custom UI utilities from original single-file UI */
+/* Glass Panel Effect (Re-usable class) */
 .glass-panel {
   background: rgba(15, 23, 42, 0.9);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.08);
-}
-.tab-active {
-  background-color: #3b82f6;
-  color: white;
-}
-.tab-inactive {
-  background-color: rgba(255,255,255,0.04);
-  color: #94a3b8;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Mirror video/canvas for camera preview */
-canvas {
-  transform: scaleX(-1);
+/* Button Focus States */
+button:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
 }
-/* Keep the video element available to MediaPipe (avoid display:none) while visually hiding it */
+
+/* --- MediaPipe / Camera Setup --- */
+
+/* CRITICAL: We use specific styles to hide the raw <video> element 
+   while keeping it active in the DOM for MediaPipe to read.
+   We force display: block !important to override the 'hidden' class
+   from React, relying on absolute positioning to hide it instead.
+   This prevents browsers from pausing the video stream optimization.
+*/
 video {
   position: absolute;
   left: -9999px;
+  top: 0;
   width: 1px;
   height: 1px;
-  transform: scaleX(-1);
   opacity: 0;
   pointer-events: none;
+  display: block !important; 
 }
 
+/* Mirror the canvas for a natural "Selfie" feel */
+canvas {
+  transform: scaleX(-1);
+}
+
+/* --- Animations for Assessment Drill --- */
+/* These support the classes: animate-in, fade-in, zoom-in */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes zoomIn {
+  from { transform: scale(0.95); }
+  to { transform: scale(1); }
+}
+
+.animate-in {
+  animation-duration: 300ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation-name: fadeIn;
+}
+
+.zoom-in {
+  animation-name: zoomIn;
+}
+
+/* Combine animations if needed */
+.fade-in.zoom-in {
+  animation-name: fadeIn, zoomIn;
+}
