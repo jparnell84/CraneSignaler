@@ -1,4 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import CameraView from './components/CameraView';
+import HUD from './components/HUD';
+import AssessmentDrill from './components/AssessmentDrill';
 
 // --- 1. UTILITY: Script Loader for MediaPipe ---
 // Since we can't use npm imports in this environment, we inject the scripts dynamically.
@@ -85,6 +88,8 @@ const App = () => {
 
   const [mode, setMode] = useState('training'); // 'training' or 'assessment'
   const [detectedSignal, setDetectedSignal] = useState('WAITING...');
+  const [thumbState, setThumbState] = useState(null);
+  const [armAngle, setArmAngle] = useState(null);
   
   // Assessment State
   const [drillTarget, setDrillTarget] = useState(null);
@@ -129,7 +134,28 @@ const App = () => {
     // Run Logic
     if (results.poseLandmarks) {
       let activeSignal = "NONE";
-      
+
+      // compute thumb and angle for HUD
+      let thumbStatus = "NONE";
+      let angleDebug = 0;
+      try {
+        const rightShoulder = results.poseLandmarks[12];
+        const rightElbow = results.poseLandmarks[14];
+        const rightWrist = results.poseLandmarks[16];
+        const leftShoulder = results.poseLandmarks[11];
+        const leftElbow = results.poseLandmarks[13];
+        const leftWrist = results.poseLandmarks[15];
+
+        const rAngle = calculateAngle(rightShoulder, rightElbow, rightWrist);
+        const lAngle = calculateAngle(leftShoulder, leftElbow, leftWrist);
+        angleDebug = Math.round(rAngle || lAngle || 0);
+
+        if (results.leftHandLandmarks) thumbStatus = detectThumb(results.leftHandLandmarks);
+        else if (results.rightHandLandmarks) thumbStatus = detectThumb(results.rightHandLandmarks);
+      } catch (e) {
+        // swallow
+      }
+
       if (SIGNAL_RULES.EMERGENCY_STOP(results.poseLandmarks)) {
         activeSignal = "EMERGENCY STOP";
       } else if (SIGNAL_RULES.RAISE_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
@@ -139,6 +165,8 @@ const App = () => {
       }
 
       setDetectedSignal(activeSignal);
+      setThumbState(thumbStatus);
+      setArmAngle(angleDebug);
 
       if (isAssessing && activeSignal === drillTarget) {
         setDrillSuccess(true);
@@ -209,70 +237,26 @@ const App = () => {
            </div>
         )}
 
-        {/* Hidden Video Source */}
-        <video 
-          ref={videoRef} 
-          className="hidden" 
-          playsInline 
-          muted 
-          autoPlay
-        ></video>
-        
-        {/* Visible Canvas Output */}
-        <canvas 
-          ref={canvasRef}
-          className="absolute inset-0 w-full h-full object-cover transform -scale-x-100"
-        />
+        {/* Camera and Canvas */}
+        <CameraView videoRef={videoRef} canvasRef={canvasRef} />
 
-        {/* HUD: TRAINING */}
-        {mode === 'training' && (
-          <div className="absolute top-6 left-6 p-6 rounded-2xl bg-slate-900/90 backdrop-blur border border-white/10 w-64 sm:w-80">
-            <h2 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-2">Real-Time Feedback</h2>
-            <div className={`text-2xl sm:text-3xl font-black mb-1 ${detectedSignal === 'NONE' ? 'text-white' : detectedSignal === 'EMERGENCY STOP' ? 'text-red-500' : 'text-green-400'}`}>
-              {detectedSignal}
-            </div>
-            <div className="text-sm text-slate-400">
-              {detectedSignal === 'NONE' ? "Align body to start" : "Signal Detected"}
-            </div>
-          </div>
-        )}
+        {/* HUD: TRAINING (presentational component) */}
+        <HUD mode={mode} detectedSignal={detectedSignal} thumb={thumbState} angle={armAngle} />
 
-        {/* HUD: ASSESSMENT */}
+        {/* HUD: ASSESSMENT (presentational component) */}
         {mode === 'assessment' && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-             <div className="max-w-md w-full p-8 rounded-2xl bg-slate-900/90 backdrop-blur text-center pointer-events-auto mx-4 border border-white/10">
-                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Drill Command</h2>
-                
-                {!drillTarget ? (
-                   <button 
-                     onClick={() => {
-                       const targets = ['EMERGENCY STOP', 'RAISE BOOM', 'LOWER BOOM'];
-                       setDrillTarget(targets[Math.floor(Math.random() * targets.length)]);
-                       setIsAssessing(true);
-                       setDrillSuccess(false);
-                     }}
-                     className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-xl w-full"
-                   >
-                     Start Random Drill
-                   </button>
-                ) : (
-                   <div>
-                      <div className="text-3xl sm:text-4xl font-black text-white mb-6">{drillTarget}</div>
-                      {drillSuccess ? (
-                        <div className="text-green-500 font-bold text-xl animate-bounce">SUCCESS!</div>
-                      ) : (
-                        <div className="text-yellow-500 font-mono animate-pulse">PERFORM SIGNAL NOW...</div>
-                      )}
-                      
-                      {drillSuccess && (
-                        <button onClick={() => setDrillTarget(null)} className="mt-6 text-sm text-blue-400 underline hover:text-blue-300">
-                          Next Drill
-                        </button>
-                      )}
-                   </div>
-                )}
-             </div>
-          </div>
+          <AssessmentDrill
+            drillTarget={drillTarget}
+            drillSuccess={drillSuccess}
+            isAssessing={isAssessing}
+            onStart={() => {
+              const targets = ['EMERGENCY STOP', 'RAISE BOOM', 'LOWER BOOM'];
+              setDrillTarget(targets[Math.floor(Math.random() * targets.length)]);
+              setIsAssessing(true);
+              setDrillSuccess(false);
+            }}
+            onReset={() => setDrillTarget(null)}
+          />
         )}
       </div>
       
