@@ -1,28 +1,5 @@
 import { calculateAngle, detectThumb } from './geometry';
 
-// Helper Math
-const calculateAngle = (a, b, c) => {
-    if(!a || !b || !c) return 0;
-    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-    let angle = Math.abs(radians * 180.0 / Math.PI);
-    if (angle > 180.0) angle = 360 - angle;
-    return angle;
-};
-
-const detectThumb = (handLandmarks) => {
-    if (!handLandmarks) return "NONE";
-    const thumbTip = handLandmarks[4];
-    const indexMCP = handLandmarks[5];
-    const wrist = handLandmarks[0];
-    const tipToKnuckle = indexMCP.y - thumbTip.y; 
-    const threshold = Math.abs(wrist.y - indexMCP.y) * 0.5; 
-
-    if (tipToKnuckle > threshold) return "UP";
-    if (tipToKnuckle < -threshold) return "DOWN";
-    return "NEUTRAL";
-};
-
-// The Rules Object
 export const SIGNAL_RULES = {
     'EMERGENCY_STOP': (pose) => {
         // Rule: Both arms extended (>145deg)
