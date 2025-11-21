@@ -49,3 +49,16 @@ export const calculateDistance = (point1, point2) => {
         Math.pow(point1.x - point2.x, 2) + Math.pow(point1.y - point2.y, 2)
     );
 };
+
+// Angle between the vector p1->p2 and the vertical-up direction (0,-1).
+// Returns degrees in [0,180]. 0 means vector points up, 90 means horizontal, 180 means down.
+export const angleToVertical = (p1, p2) => {
+    if (!p1 || !p2) return 0;
+    const vx = p2.x - p1.x;
+    const vy = p2.y - p1.y;
+    const ang = Math.atan2(vy, vx); // angle of vector in radians
+    const upAng = -Math.PI / 2; // angle of (0,-1)
+    let deg = Math.abs((ang - upAng) * 180 / Math.PI);
+    if (deg > 180) deg = 360 - deg;
+    return deg;
+};

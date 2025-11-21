@@ -109,12 +109,14 @@ const App = () => {
       else if (results.rightHandLandmarks) thumbStatus = detectThumb(results.rightHandLandmarks);
     } catch (e) {}
 
-    if (SIGNAL_RULES.EMERGENCY_STOP(results.poseLandmarks)) {
-      activeSignal = "EMERGENCY STOP";
-    } else if (SIGNAL_RULES.RAISE_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
+    // Prefer specific single-arm signals (raise/lower) before the broad emergency-stop
+    // This prevents LOWER_BOOM from being overridden when the user intentionally signals lower.
+    if (SIGNAL_RULES.RAISE_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
       activeSignal = "RAISE BOOM";
     } else if (SIGNAL_RULES.LOWER_BOOM(results.poseLandmarks, results.leftHandLandmarks, results.rightHandLandmarks)) {
       activeSignal = "LOWER BOOM";
+    } else if (SIGNAL_RULES.EMERGENCY_STOP(results.poseLandmarks)) {
+      activeSignal = "EMERGENCY STOP";
     }
 
     setDetectedSignal(activeSignal);
