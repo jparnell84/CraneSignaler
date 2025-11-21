@@ -1,7 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { useMediaPipe } from '../hooks/useMediaPipe';
 
-export default function CameraView({ onDetections, setHolisticLoaded }) {
+export default function CameraView({ onDetections, setHolisticLoaded, setCameraError }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -35,11 +35,15 @@ export default function CameraView({ onDetections, setHolisticLoaded }) {
     if (typeof onDetections === 'function') onDetections(results, { videoRef, canvasRef });
   };
 
-  const { loaded } = useMediaPipe(videoRef, internalOnResults);
+  const { loaded, error } = useMediaPipe(videoRef, internalOnResults);
 
   useEffect(() => {
     if (typeof setHolisticLoaded === 'function') setHolisticLoaded(!!loaded);
   }, [loaded, setHolisticLoaded]);
+
+  useEffect(() => {
+    if (typeof setCameraError === 'function') setCameraError(error || null);
+  }, [error, setCameraError]);
 
   return (
     <>

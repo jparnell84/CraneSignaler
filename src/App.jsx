@@ -72,6 +72,7 @@ const App = () => {
   const [detectedSignal, setDetectedSignal] = useState('WAITING...');
   const [thumbState, setThumbState] = useState(null);
   const [armAngle, setArmAngle] = useState(null);
+  const [cameraError, setCameraError] = useState(null);
   
   // Assessment State
   const [drillTarget, setDrillTarget] = useState(null);
@@ -206,7 +207,17 @@ const App = () => {
         )}
 
           {/* Camera and Canvas */}
-          <CameraView onDetections={handleDetections} setHolisticLoaded={setHolisticLoaded} />
+          <CameraView onDetections={handleDetections} setHolisticLoaded={setHolisticLoaded} setCameraError={setCameraError} />
+
+          {cameraError && (
+            <div className="absolute inset-0 flex items-center justify-center z-30 bg-black/60 text-white p-6 text-center">
+              <div>
+                <div className="text-xl font-bold mb-2">Camera Error</div>
+                <div className="text-sm text-slate-300 mb-4">{cameraError}</div>
+                <div className="text-sm text-slate-400">If the camera is in use, close other apps or tabs using it and reload this page.</div>
+              </div>
+            </div>
+          )}
 
           {/* Voice subtitle overlay */}
           <VoiceSubtitle text={subtitleText} />

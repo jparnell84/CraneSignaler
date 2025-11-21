@@ -16,6 +16,7 @@ export const useMediaPipe = (videoRef, onResults) => {
     const cameraRef = useRef(null);
     const holisticRef = useRef(null);
     const [loaded, setLoaded] = useState(false);
+    const [error, setError] = useState(null);
 
     useEffect(() => {
         let mounted = true;
@@ -30,11 +31,37 @@ export const useMediaPipe = (videoRef, onResults) => {
 
                 if (!mounted) return;
 
-                const HolisticCtor = window.Holistic || window.holistic || null;
-                const CameraCtor = window.Camera || null;
+
+                // Try to find constructors on `window`. If not present, attempt dynamic import fallbacks.
+                let HolisticCtor = window.Holistic || window.holistic || null;
+                let CameraCtor = window.Camera || null;
 
                 if (!HolisticCtor || !CameraCtor) {
-                    console.warn('MediaPipe constructors not found on window');
+                    try {
+                        // Try dynamic import of ESM modules from CDN as a fallback
+                        const [holisticModule, cameraModule, drawingModule] = await Promise.all([
+                            import('https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js'),
+                            import('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js'),
+                            import('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js')
+                        ]);
+
+                        HolisticCtor = holisticModule.Holistic || holisticModule.default || HolisticCtor;
+                        CameraCtor = cameraModule.Camera || cameraModule.default || CameraCtor;
+
+                        // expose drawing utilities to window for existing draw calls
+                        if (drawingModule) {
+                            window.drawConnectors = drawingModule.drawConnectors || window.drawConnectors;
+                            window.drawLandmarks = drawingModule.drawLandmarks || window.drawLandmarks;
+                            window.POSE_CONNECTIONS = drawingModule.POSE_CONNECTIONS || window.POSE_CONNECTIONS;
+                            window.HAND_CONNECTIONS = drawingModule.HAND_CONNECTIONS || window.HAND_CONNECTIONS;
+                        }
+                    } catch (e) {
+                        console.warn('Dynamic import fallback for MediaPipe failed', e);
+                    }
+                }
+
+                if (!HolisticCtor || !CameraCtor) {
+                    console.warn('MediaPipe constructors not found on window after fallback');
                     return;
                 }
 
@@ -54,10 +81,19 @@ export const useMediaPipe = (videoRef, onResults) => {
                         width: 1280,
                         height: 720
                     });
-                    cameraRef.current.start();
+                    try {
+                        await cameraRef.current.start();
+                        setError(null);
+                        setLoaded(true);
+                    } catch (e) {
+                        // Common reason: camera already in use by another app/tab
+                        console.error('Failed to start camera:', e);
+                        setError(e && e.name ? `${e.name}: ${e.message || ''}` : String(e));
+                        setLoaded(false);
+                    }
+                } else {
+                    setLoaded(true);
                 }
-
-                setLoaded(true);
             } catch (e) {
                 console.error('Failed to initialize MediaPipe:', e);
             }
@@ -76,6 +112,6 @@ export const useMediaPipe = (videoRef, onResults) => {
         };
     }, [videoRef, onResults]);
 
-    return { loaded };
+    return { loaded, error };
 };
 
