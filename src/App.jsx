@@ -34,12 +34,14 @@ const App = () => {
   const canvasRef = useRef(null);
 
   // --- HISTORY BUFFERS FOR MOTION DETECTION ---
-  // We store the last 30 frames of Index Finger Tip (Landmark 8)
-  // This is required for 'HOIST LOAD' and 'LOWER LOAD' to detect circular motion
-  const leftHandHistory = useRef([]);
-  const rightHandHistory = useRef([]);
+  // 1. Index Fingers (For Hoist/Lower Load circles & metronomes)
+  const leftIndexHistory = useRef([]);
+  const rightIndexHistory = useRef([]);
+  
+  // 2. Wrists (For Emergency Stop horizontal wave)
+  const leftWristHistory = useRef([]);
+  const rightWristHistory = useRef([]);
 
-  // -- Voice Init --
   useEffect(() => {
     voiceManagerRef.current = new VoiceManager((cmd) => {
         setVoiceCommand(cmd);
@@ -59,21 +61,19 @@ const App = () => {
     }
   };
 
-  // -- HELPER: Update History Buffers --
-  const updateHistory = (handLandmarks, historyRef) => {
-    if (handLandmarks) {
-        // Track Index Finger Tip (Landmark 8)
-        const tip = handLandmarks[8];
-        historyRef.current.push({ x: tip.x, y: tip.y });
-        // Keep only last 30 frames (approx 1 second of motion)
+  // -- HELPER: Generic History Tracker --
+  // Updates a history array with {x, y} of a specific landmark
+  const updateGeneralHistory = (landmark, historyRef) => {
+    if (landmark) {
+        historyRef.current.push({ x: landmark.x, y: landmark.y });
+        // Keep 30 frames (~1 sec) for robust motion analysis
         if (historyRef.current.length > 30) historyRef.current.shift();
     } else {
-        // If hand is lost, clear history to prevent "teleporting" artifacts
+        // If tracking is lost, clear history to prevent "teleporting" artifacts
         historyRef.current = [];
     }
   };
 
-  // -- MediaPipe Callback --
   const onResults = useCallback((results) => {
     if (!webcamRef.current || !canvasRef.current || !webcamRef.current.video) return;
 
@@ -96,24 +96,36 @@ const App = () => {
     if (results.poseLandmarks) {
       const pose = results.poseLandmarks;
       
-      // 1. Update Motion History (Critical for dynamic signals)
-      updateHistory(results.leftHandLandmarks, leftHandHistory);
-      updateHistory(results.rightHandLandmarks, rightHandHistory);
+      // --- UPDATE HISTORIES ---
+      
+      // 1. Index Fingers (from Hand Landmarks)
+      // Note: Hand landmarks are sometimes null if hands go off screen
+      const lIndex = results.leftHandLandmarks ? results.leftHandLandmarks[8] : null;
+      const rIndex = results.rightHandLandmarks ? results.rightHandLandmarks[8] : null;
+      updateGeneralHistory(lIndex, leftIndexHistory);
+      updateGeneralHistory(rIndex, rightIndexHistory);
 
-      // 2. UI Updates
+      // 2. Wrists (from Pose Landmarks - usually more stable)
+      // 15: Left Wrist, 16: Right Wrist
+      updateGeneralHistory(pose[15], leftWristHistory);
+      updateGeneralHistory(pose[16], rightWristHistory);
+
+      // UI Updates
       setLeftAngle(calculateAngle(pose[11], pose[13], pose[15]));
       setRightAngle(calculateAngle(pose[12], pose[14], pose[16]));
 
-      // 3. Check Signals
+      // Check Signals
       let activeSignal = "NONE";
+      // Iterate through rule book
       for (const sig of Object.keys(SIGNAL_RULES)) {
-          // PASS HISTORY TO RULES
           if (SIGNAL_RULES[sig](
               pose, 
               results.leftHandLandmarks, 
               results.rightHandLandmarks,
-              leftHandHistory.current,
-              rightHandHistory.current
+              leftIndexHistory.current,  // For Hoist
+              rightIndexHistory.current, // For Hoist
+              leftWristHistory.current,  // For Emergency Stop
+              rightWristHistory.current  // For Emergency Stop
           )) {
               activeSignal = sig;
               break;
@@ -160,7 +172,7 @@ const App = () => {
 
       {mode === 'training' && (
         <div className="mt-6 px-6 py-3 bg-slate-800 rounded-full border border-slate-700 text-slate-400 text-sm">
-            Try: <span className="text-yellow-400 font-bold">Hoist Load</span> (Finger UP + Motion) or <span className="text-yellow-400 font-bold">Main Hoist</span> (Fist on Head)
+            Try: <span className="text-yellow-400 font-bold">Hoist Load</span> (Finger UP + Motion) or <span className="text-yellow-400 font-bold">Emergency Stop</span> (Wave arms)
         </div>
       )}
     </div>
