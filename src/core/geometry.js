@@ -1,6 +1,6 @@
 // src/core/geometry.js
 
-// --- EXISTING HELPERS ---
+// --- BASIC HELPERS ---
 export const calculateAngle = (a, b, c) => {
     if (!a || !b || !c) return 0;
     const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
@@ -14,6 +14,8 @@ export const calculateDistance = (point1, point2) => {
     return Math.sqrt(Math.pow(point1.x - point2.x, 2) + Math.pow(point1.y - point2.y, 2));
 };
 
+// --- HAND DETECTORS ---
+
 export const detectThumb = (handLandmarks) => {
     if (!handLandmarks) return "NONE";
     const thumbTip = handLandmarks[4];
@@ -26,6 +28,28 @@ export const detectThumb = (handLandmarks) => {
 
     if (tipToKnuckle > threshold) return "UP";
     if (tipToKnuckle < -threshold) return "DOWN";
+    return "NEUTRAL";
+};
+
+// Updated logic for Extend/Retract Boom
+export const detectThumbHorizontal = (handLandmarks, isRightHand) => {
+    if (!handLandmarks) return "NONE";
+    const thumbTip = handLandmarks[4];
+    const indexMCP = handLandmarks[5]; 
+    const wrist = handLandmarks[0]; 
+    if (!thumbTip || !indexMCP) return "NONE";
+
+    const diff = thumbTip.x - indexMCP.x;
+    const handSize = calculateDistance(wrist, indexMCP);
+    const threshold = handSize * 0.2;
+
+    if (isRightHand) {
+        if (diff < -threshold) return "OUT";
+        if (diff > threshold) return "IN";
+    } else {
+        if (diff > threshold) return "OUT";
+        if (diff < -threshold) return "IN";
+    }
     return "NEUTRAL";
 };
 
@@ -52,9 +76,40 @@ export const isFingerCurled = (landmarks, tipIdx, pipIdx) => {
     return distTipToWrist < distPipToWrist;
 };
 
+// NEW: Checks if Index, Middle, Ring, Pinky are all extended (straight)
+export const areFingersExtended = (hand) => {
+    if (!hand) return false;
+    const wrist = hand[0];
+    
+    // Check Index(8), Middle(12), Ring(16), Pinky(20)
+    // If Tip is further from wrist than PIP, it is extended
+    const checkFinger = (tipIdx, pipIdx) => {
+        const tip = hand[tipIdx];
+        const pip = hand[pipIdx];
+        return calculateDistance(tip, wrist) > calculateDistance(pip, wrist);
+    };
+
+    return checkFinger(8,6) && checkFinger(12,10) && checkFinger(16,14) && checkFinger(20,18);
+};
+
+// NEW: Checks if the hand is oriented horizontally (flat)
+// Returns true if the vector from Wrist to Index Tip is mostly horizontal
+export const isHandHorizontal = (hand) => {
+    if (!hand) return false;
+    const wrist = hand[0];
+    const indexTip = hand[8]; // Using Index Tip as the direction vector
+
+    const dx = Math.abs(indexTip.x - wrist.x);
+    const dy = Math.abs(indexTip.y - wrist.y);
+
+    // If width (dx) is significantly larger than height (dy), it's horizontal
+    return dx > dy * 1.2;
+};
+
+// --- MOTION DETECTORS ---
+
 export const detectRepetitiveMotion = (history) => {
     if (history.length < 10) return false;
-
     let minX = 1, maxX = 0, minY = 1, maxY = 0;
     let totalPathLength = 0;
 
@@ -79,10 +134,8 @@ export const detectRepetitiveMotion = (history) => {
     return ratio > 1.2; 
 };
 
-// --- NEW: Horizontal Wave Detector (For Emergency Stop) ---
 export const detectHorizontalWave = (history) => {
     if (history.length < 5) return false;
-
     let minX = 1, maxX = 0, minY = 1, maxY = 0;
     let totalPath = 0;
 
@@ -100,17 +153,31 @@ export const detectHorizontalWave = (history) => {
 
     const width = maxX - minX;
     const height = maxY - minY;
-
-    // 1. Movement must be significant horizontally (> 15% of screen)
     const significantMove = width > 0.15;
-
-    // 2. Movement must be primarily horizontal (Width >> Height)
-    // We allow some vertical movement (arcing), but width should be dominant.
     const isHorizontal = width > (height * 1.5);
-
-    // 3. Oscillation check: Total path should be much longer than net displacement
-    // If you move Left -> Right -> Left, your path is 2x your width.
     const isOscillating = totalPath > width * 1.2;
 
     return significantMove && isHorizontal && isOscillating;
+};
+
+export const getDebugStats = (pose, lHand, rHand) => {
+    if (!pose) return {};
+
+    const stats = {
+        wristDist: calculateDistance(pose[15], pose[16]).toFixed(3),
+        handsLow: (pose[15].y > pose[11].y).toString(),
+        
+        lArmAngle: calculateAngle(pose[11], pose[13], pose[15]).toFixed(0),
+        rArmAngle: calculateAngle(pose[12], pose[14], pose[16]).toFixed(0),
+        
+        lHandBlade: lHand ? areFingersExtended(lHand).toString() : "No Hand",
+        rHandBlade: rHand ? areFingersExtended(rHand).toString() : "No Hand",
+        
+        lHandFlat: lHand ? isHandHorizontal(lHand).toString() : "No Hand",
+        rHandFlat: rHand ? isHandHorizontal(rHand).toString() : "No Hand",
+
+        lThumbHoriz: lHand ? detectThumbHorizontal(lHand, false) : "None",
+        rThumbHoriz: rHand ? detectThumbHorizontal(rHand, true) : "None"
+    };
+    return stats;
 };

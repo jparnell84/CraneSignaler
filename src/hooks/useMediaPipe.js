@@ -1,9 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Holistic } from '@mediapipe/holistic';
 import { Camera } from '@mediapipe/camera_utils';
 
 export const useMediaPipe = (videoRef, onResults) => {
     const [isLoaded, setIsLoaded] = useState(false);
+    
+    // 1. Create a ref to hold the latest callback
+    const onResultsRef = useRef(onResults);
+
+    // 2. Update the ref whenever the parent passes a new callback
+    useEffect(() => {
+        onResultsRef.current = onResults;
+    }, [onResults]);
 
     useEffect(() => {
         if (!videoRef.current) return;
@@ -15,18 +23,24 @@ export const useMediaPipe = (videoRef, onResults) => {
         });
 
         holistic.setOptions({
-            modelComplexity: 1,
+            modelComplexity: 2,
             smoothLandmarks: true,
             enableSegmentation: false,
             refineFaceLandmarks: false,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
         });
 
+        // 3. Wrap the call to always use .current
+        // This allows MediaPipe to keep running without re-initialization
+        // while always calling the freshest version of your logic.
         holistic.onResults((results) => {
             setIsLoaded(true);
-            onResults(results);
+            if (onResultsRef.current) {
+                onResultsRef.current(results);
+            }
         });
 
-        // Initialize Camera
         if (videoRef.current && videoRef.current.video) {
             const camera = new Camera(videoRef.current.video, {
                 onFrame: async () => {
@@ -39,10 +53,7 @@ export const useMediaPipe = (videoRef, onResults) => {
             });
             camera.start();
         }
-        
-        // Cleanup not strictly necessary for singleton camera, 
-        // but good practice if component unmounts
-    }, []); // Run once on mount
+    }, []); // Dependency array stays empty to prevent reload loops
 
     return isLoaded;
 };

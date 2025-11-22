@@ -5,42 +5,40 @@ import {
     calculateDistance, 
     isFingerCurled, 
     detectRepetitiveMotion,
-    detectHorizontalWave
+    detectHorizontalWave,
+    detectThumbHorizontal,
+    areFingersExtended,
+    isHandHorizontal 
 } from './geometry';
 
 export const SIGNAL_RULES = {
     
     // --- SAFETY SIGNALS ---
 
-    // UPDATED: Emergency Stop
-    // Requires: Upper arms horizontal + Wrists waving horizontally
     'EMERGENCY STOP': (pose, lHand, rHand, lIdxHist, rIdxHist, lWristHist, rWristHist) => {
         if (!pose) return false;
-
-        // 1. Static Check: Upper Arms should be roughly horizontal
-        // Compare Shoulder Y vs Elbow Y
         const rShoulder = pose[12]; const rElbow = pose[14];
         const lShoulder = pose[11]; const lElbow = pose[13];
         
-        // Allow some margin (0.15) for shoulders/elbows alignment
         const upperArmsHorizontal = Math.abs(rShoulder.y - rElbow.y) < 0.15 && Math.abs(lShoulder.y - lElbow.y) < 0.15;
         
         if (!upperArmsHorizontal) return false;
 
-        // 2. Dynamic Check: Wrists moving horizontally
-        // We pass the wrist histories to our new detector
         const rWaving = detectHorizontalWave(rWristHist);
         const lWaving = detectHorizontalWave(lWristHist);
 
-        // If EITHER arm is doing the wave (while upper arms are flat), trigger it.
         return rWaving || lWaving;
     },
 
     'DOG EVERYTHING': (pose) => {
         if (!pose) return false;
+        // 1. Wrist Proximity: Hands must be touching
         const dist = calculateDistance(pose[15], pose[16]);
+        
+        // 2. Location: Hands below shoulders (Waist/Stomach level)
         const handsLow = pose[15].y > pose[11].y; 
-        return dist < 0.15 && handsLow;
+        
+        return dist < 0.10 && handsLow;
     },
 
     // --- HOIST SIGNALS ---
@@ -55,66 +53,109 @@ export const SIGNAL_RULES = {
         return rOnHead || lOnHead;
     },
 
-    'AUX HOIST': (pose) => {
+    'AUX HOIST': (pose, lHand, rHand) => {
         if (!pose) return false;
-        const rArmAngle = calculateAngle(pose[12], pose[14], pose[16]);
-        const rBent = rArmAngle > 70 && rArmAngle < 110;
-        const lTap = calculateDistance(pose[15], pose[14]) < 0.2;
-        const lArmAngle = calculateAngle(pose[11], pose[13], pose[15]);
-        const lBent = lArmAngle > 70 && lArmAngle < 110;
-        const rTap = calculateDistance(pose[16], pose[13]) < 0.2;
-        return (rBent && lTap) || (lBent && rTap);
+        
+        const isVerticalForearm = (shoulder, elbow, wrist) => {
+            const angle = calculateAngle(shoulder, elbow, wrist);
+            if (angle < 20 || angle > 70) return false; 
+            const isVertical = Math.abs(wrist.x - elbow.x) < 0.15; 
+            const isAbove = wrist.y < elbow.y; 
+            return isVertical && isAbove;
+        };
+
+        const threshold = 0.3;
+
+        const rArmActive = isVerticalForearm(pose[12], pose[14], pose[16]);
+        const lHandTouching = calculateDistance(pose[15], pose[14]) < threshold;
+        
+        const lArmActive = isVerticalForearm(pose[11], pose[13], pose[15]);
+        const rHandTouching = calculateDistance(pose[16], pose[13]) < threshold;
+
+        return (rArmActive && lHandTouching) || (lArmActive && rHandTouching);
     },
 
-    // UPDATED: Hoist Load
-    // Requires: Index Up + Other Fingers Curled + Circular/Repetitive Motion
     'HOIST LOAD': (pose, lHand, rHand, lIndexHist, rIndexHist) => {
         if (!pose) return false;
-        const checkSide = (hand, history) => {
+        
+        const checkSide = (hand, history, shoulder, elbow, wrist, otherWristIndex, activeElbowIndex) => {
             if (!hand || !history) return false;
             
-            // 1. Static Pose Check: Index UP, others curled
-            const indexUp = detectIndexFinger(hand) === 'UP';
-            // Check Middle(12) & Ring(16) tips vs their PIPs(10, 14)
-            const othersCurled = isFingerCurled(hand, 12, 10) && isFingerCurled(hand, 16, 14);
-            
-            if (!indexUp || !othersCurled) return false;
+            const isForearmVertical = Math.abs(wrist.x - elbow.x) < 0.25;
+            const isAbove = wrist.y < elbow.y; 
+            if (!isForearmVertical || !isAbove) return false;
 
-            // 2. Motion Check: Is the finger moving in a circle/arc?
+            const indexUp = detectIndexFinger(hand) === 'UP';
+            const indexStraight = !isFingerCurled(hand, 8, 6); 
+            if (!indexUp || !indexStraight) return false;
+
+            const otherWrist = pose[otherWristIndex];
+            const activeElbow = pose[activeElbowIndex];
+            if (calculateDistance(otherWrist, activeElbow) < 0.3) return false;
+
             return detectRepetitiveMotion(history);
         };
-        return checkSide(rHand, rIndexHist) || checkSide(lHand, lIndexHist);
+
+        const rActive = checkSide(rHand, rIndexHist, pose[12], pose[14], pose[16], 15, 14);
+        const lActive = checkSide(lHand, lIndexHist, pose[11], pose[13], pose[15], 16, 13);
+
+        return rActive || lActive;
     },
 
-    // UPDATED: Lower Load
-    // Requires: Index Down + Other Fingers Curled + Circular/Repetitive Motion
     'LOWER LOAD': (pose, lHand, rHand, lIndexHist, rIndexHist) => {
         if (!pose) return false;
-        const checkSide = (hand, history) => {
+        
+        const checkSide = (hand, history, shoulder, elbow, wrist, otherWristIndex, activeElbowIndex) => {
             if (!hand || !history) return false;
 
-            // 1. Static Pose: Index DOWN, others curled
-            const indexDown = detectIndexFinger(hand) === 'DOWN';
-            const othersCurled = isFingerCurled(hand, 12, 10) && isFingerCurled(hand, 16, 14);
-            
-            if (!indexDown || !othersCurled) return false;
+            const isForearmVertical = Math.abs(wrist.x - elbow.x) < 0.25;
+            const isBelow = wrist.y > elbow.y; 
+            if (!isForearmVertical || !isBelow) return false;
 
-            // 2. Motion Check
+            const indexDown = detectIndexFinger(hand) === 'DOWN';
+            const indexStraight = !isFingerCurled(hand, 8, 6);
+            if (!indexDown || !indexStraight) return false;
+
+            const otherWrist = pose[otherWristIndex];
+            const activeElbow = pose[activeElbowIndex];
+            if (calculateDistance(otherWrist, activeElbow) < 0.3) return false;
+
             return detectRepetitiveMotion(history);
         };
 
-        return checkSide(rHand, rIndexHist) || checkSide(lHand, lIndexHist);
+        const rActive = checkSide(rHand, rIndexHist, pose[12], pose[14], pose[16], 15, 14);
+        const lActive = checkSide(lHand, lIndexHist, pose[11], pose[13], pose[15], 16, 13);
+
+        return rActive || lActive;
     },
 
     // --- BOOM SIGNALS ---
-
-    'SWING BOOM': (pose) => {
+    'SWING BOOM': (pose, lHand, rHand) => {
         if (!pose) return false;
-        const rArmStraight = calculateAngle(pose[12], pose[14], pose[16]) > 140;
-        const lHandTouching = calculateDistance(pose[15], pose[14]) < 0.2;
-        const lArmStraight = calculateAngle(pose[11], pose[13], pose[15]) > 140;
-        const rHandTouching = calculateDistance(pose[16], pose[13]) < 0.2;
-        return (rArmStraight && lHandTouching) || (lArmStraight && rHandTouching);
+
+        const checkSide = (shoulder, elbow, wrist, hand) => {
+            // 1. Pose: Arm Straight Horizontal
+            const armStraight = calculateAngle(shoulder, elbow, wrist) > 140;
+            // Y difference small = horizontal
+            const armHorizontal = Math.abs(shoulder.y - wrist.y) < 0.2;
+            
+            if (!armStraight || !armHorizontal) return false;
+
+            // 2. Hand Shape: "Blade Hand" (All fingers extended)
+            // This distinguishes it from a fist or pointing finger
+            if (!hand) return false; 
+            const isBlade = areFingersExtended(hand);
+            const isFlat = isHandHorizontal(hand);
+
+            return isBlade && isFlat;
+        };
+
+        // Check Right Arm (Active)
+        const rActive = checkSide(pose[12], pose[14], pose[16], rHand);
+        // Check Left Arm (Active)
+        const lActive = checkSide(pose[11], pose[13], pose[15], lHand);
+
+        return rActive || lActive;
     },
 
     'RAISE BOOM': (pose, lHand, rHand) => {
@@ -138,18 +179,20 @@ export const SIGNAL_RULES = {
     },
 
     'EXTEND BOOM': (pose, lHand, rHand) => {
-        if (!pose || !lHand || !rHand) return false;
-        const wristDist = calculateDistance(lHand[0], rHand[0]);
-        const thumbDist = calculateDistance(lHand[4], rHand[4]);
-        const elbowsBent = calculateAngle(pose[11], pose[13], pose[15]) < 120;
-        return elbowsBent && (thumbDist > wristDist * 1.5); 
+        const isFist = (hand) => isFingerCurled(hand, 8, 6); 
+        const lDir = detectThumbHorizontal(lHand, false); 
+        const rDir = detectThumbHorizontal(rHand, true);
+        const lFist = lHand ? isFist(lHand) : false;
+        const rFist = rHand ? isFist(rHand) : false;
+        return lDir === 'OUT' && rDir === 'OUT' && lFist && rFist;
     },
 
     'RETRACT BOOM': (pose, lHand, rHand) => {
-        if (!pose || !lHand || !rHand) return false;
-        const wristDist = calculateDistance(lHand[0], rHand[0]);
-        const thumbDist = calculateDistance(lHand[4], rHand[4]);
-        const elbowsBent = calculateAngle(pose[11], pose[13], pose[15]) < 120;
-        return elbowsBent && (thumbDist < wristDist * 0.8);
+        const isFist = (hand) => isFingerCurled(hand, 8, 6);
+        const lDir = detectThumbHorizontal(lHand, false);
+        const rDir = detectThumbHorizontal(rHand, true);
+        const lFist = lHand ? isFist(lHand) : false;
+        const rFist = rHand ? isFist(rHand) : false;
+        return lDir === 'IN' && rDir === 'IN' && lFist && rFist;
     },
 };
