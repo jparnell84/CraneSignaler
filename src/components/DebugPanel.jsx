@@ -4,7 +4,7 @@ const DebugPanel = ({ stats, isVisible }) => {
   if (!isVisible || !stats) return null;
 
   return (
-    <div className="absolute top-4 right-4 p-4 rounded-xl bg-black/80 backdrop-blur border border-red-500/30 w-64 font-mono text-xs text-green-400 shadow-2xl overflow-y-auto max-h-[80vh]">
+    <div className="absolute top-4 right-4 p-4 rounded-xl bg-black/80 backdrop-blur border border-red-500/30 w-64 font-mono text-xs text-green-400 shadow-2xl overflow-y-auto max-h-[80vh] z-50">
       <h3 className="text-white font-bold border-b border-gray-700 pb-2 mb-2">DEBUG METRICS</h3>
       
       <div className="space-y-3">
@@ -13,7 +13,7 @@ const DebugPanel = ({ stats, isVisible }) => {
           <p className="text-gray-400 mb-1">-- Dog Everything --</p>
           <div className="flex justify-between">
             <span>Wrist Dist:</span>
-            <span className={stats.wristDist < 0.15 ? "text-white font-bold" : "text-red-400"}>{stats.wristDist}</span>
+            <span className={stats.wristDist < 0.12 ? "text-white font-bold" : "text-red-400"}>{stats.wristDist}</span>
           </div>
           <div className="flex justify-between">
             <span>Hands Low:</span>
