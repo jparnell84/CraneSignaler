@@ -32,7 +32,6 @@ export const isArmHorizontal = (shoulder, elbow, wrist) => {
 };
 
 // --- HAND HELPERS ---
-
 export const detectThumb = (handLandmarks) => {
     if (!handLandmarks) return "NONE";
     const thumbTip = handLandmarks[4];
@@ -41,15 +40,15 @@ export const detectThumb = (handLandmarks) => {
     if (!thumbTip || !indexMCP || !wrist) return "NONE";
 
     const tipToKnuckle = indexMCP.y - thumbTip.y; 
-    const threshold = Math.abs(wrist.y - indexMCP.y) * 0.5; 
+    
+    // ROBUSTNESS FIX: Use Euclidean distance (Hand Size) for threshold.
+    // Old method used Y-distance, which got too small when hand was horizontal.
+    const handSize = calculateDistance(wrist, indexMCP);
+    const threshold = handSize * 0.4; // 40% of hand size required for "UP/DOWN"
 
     if (tipToKnuckle > threshold) return "UP";
     if (tipToKnuckle < -threshold) return "DOWN";
     return "NEUTRAL";
-};
-
-export const isThumbNeutral = (handLandmarks) => {
-    return detectThumb(handLandmarks) === "NEUTRAL";
 };
 
 export const detectThumbHorizontal = (handLandmarks, isRightHand) => {
@@ -61,16 +60,50 @@ export const detectThumbHorizontal = (handLandmarks, isRightHand) => {
 
     const diff = thumbTip.x - indexMCP.x;
     const handSize = calculateDistance(wrist, indexMCP);
-    const threshold = handSize * 0.2;
+    
+    // Threshold: 15% of hand size
+    const threshold = handSize * 0.15; 
 
     if (isRightHand) {
-        if (diff < -threshold) return "OUT";
-        if (diff > threshold) return "IN";
+        // RIGHT HAND (Appears on Left of Screen)
+        if (diff < -threshold) return "OUT"; // Points Left (Image) -> Out
+        if (diff > threshold) return "IN";   // Points Right (Image) -> In
     } else {
-        if (diff > threshold) return "OUT";
-        if (diff < -threshold) return "IN";
+        // LEFT HAND (Appears on Right of Screen)
+        if (diff > threshold) return "OUT";  // Points Right (Image) -> Out
+        if (diff < -threshold) return "IN";  // Points Left (Image) -> In
     }
     return "NEUTRAL";
+};
+
+// HELPER: Combine Vertical and Horizontal into one status for Telemetry
+// Priority: Vertical (Up/Down) > Horizontal (Out/In)
+export const getThumbStatus = (hand, isRight) => {
+    if (!hand) return "N/A";
+    
+    const vert = detectThumb(hand);
+    if (vert !== "NEUTRAL") return vert; // Returns "UP" or "DOWN"
+    
+    return detectThumbHorizontal(hand, isRight); // Returns "OUT", "IN", or "NEUTRAL"
+};
+
+// Check if thumb is doing ANYTHING (Up, Down, In, Out)
+// Useful for signals like Trolley where direction varies
+export const isThumbActive = (handLandmarks) => {
+    if (!handLandmarks) return false;
+    return detectThumb(handLandmarks) !== "NEUTRAL" || 
+           detectThumbHorizontal(handLandmarks, true) !== "NEUTRAL"; // Right/Left doesn't matter for pure activity check
+};
+
+// Check if thumb is Neutral (Safe)
+export const isThumbNeutral = (handLandmarks) => {
+    return detectThumb(handLandmarks) === "NEUTRAL";
+};
+
+// ... (Keep areHandsLevel, detectIndexFinger, isFingerCurled, etc.) ...
+export const areHandsLevel = (lHand, rHand) => {
+    if (!lHand || !rHand) return false;
+    return Math.abs(lHand[0].y - rHand[0].y) < 0.2;
 };
 
 export const detectIndexFinger = (handLandmarks) => {
@@ -78,18 +111,32 @@ export const detectIndexFinger = (handLandmarks) => {
     const tip = handLandmarks[8];
     const pip = handLandmarks[6];
     const wrist = handLandmarks[0];
-    
-    // Check 1: Verticality (Tip above Knuckle)
-    const isVertical = tip.y < pip.y; 
-    
-    // Check 2: Straightness (Tip further from wrist than knuckle)
+    if (!tip || !pip || !wrist) return "NONE";
+
     const distTip = calculateDistance(tip, wrist);
     const distPip = calculateDistance(pip, wrist);
     const isStraight = distTip > distPip * 1.1;
 
-    if (isVertical && isStraight) return "UP";
-    if (tip.y > pip.y && isStraight) return "DOWN";
-    return "NEUTRAL";
+    if (!isStraight) return "NEUTRAL";
+
+    // SENSITIVITY FIX: Check that vertical travel is dominant over horizontal
+    const dy = tip.y - pip.y;
+    const dx = Math.abs(tip.x - pip.x);
+
+    if (dy < -dx) return "UP"; // Must be pointing up more than sideways
+    if (dy > dx) return "DOWN"; // Must be pointing down more than sideways
+    return "NEUTRAL"; // Otherwise, it's considered horizontal/NEUTRAL
+};
+
+// NEW HELPER: More robust check for just "is the index finger straight?"
+// This is better for signals like SWING where direction doesn't matter, only the "pointing" gesture.
+export const isIndexPointing = (handLandmarks) => {
+    if (!handLandmarks) return false;
+    const tip = handLandmarks[8];
+    const pip = handLandmarks[6];
+    const wrist = handLandmarks[0];
+    if (!tip || !pip || !wrist) return false;
+    return calculateDistance(tip, wrist) > calculateDistance(pip, wrist) * 1.1;
 };
 
 export const isFingerCurled = (landmarks, tipIdx, pipIdx) => {
@@ -97,17 +144,14 @@ export const isFingerCurled = (landmarks, tipIdx, pipIdx) => {
     const wrist = landmarks[0];
     const tip = landmarks[tipIdx];
     const pip = landmarks[pipIdx];
-    const distTipToWrist = calculateDistance(tip, wrist);
-    const distPipToWrist = calculateDistance(pip, wrist);
-    return distTipToWrist < distPipToWrist;
+    return calculateDistance(tip, wrist) < calculateDistance(pip, wrist);
 };
 
-// Essential for distinguishing "Pointing" (Hoist) from "Open Hand" (Bridge/Stop)
 export const areOtherFingersCurled = (hand) => {
     if (!hand) return false;
-    return isFingerCurled(hand, 12, 10) && // Middle
-           isFingerCurled(hand, 16, 14) && // Ring
-           isFingerCurled(hand, 20, 18);   // Pinky
+    return isFingerCurled(hand, 12, 10) && 
+           isFingerCurled(hand, 16, 14) && 
+           isFingerCurled(hand, 20, 18);
 };
 
 export const isPalmOpen = (hand) => {
@@ -116,7 +160,6 @@ export const isPalmOpen = (hand) => {
     const isExtended = (tipIdx, pipIdx) => {
         const tip = hand[tipIdx];
         const pip = hand[pipIdx];
-        // Tip must be further from wrist than knuckle
         return calculateDistance(tip, wrist) > calculateDistance(pip, wrist) * 1.05; 
     };
     return isExtended(8,6) && isExtended(12,10) && isExtended(16,14) && isExtended(20,18);
@@ -126,12 +169,30 @@ export const isHandHorizontal = (hand) => {
     if (!hand) return false;
     const wrist = hand[0];
     const indexTip = hand[8]; 
-    
     const dx = Math.abs(indexTip.x - wrist.x);
     const dy = Math.abs(indexTip.y - wrist.y);
-    
-    // Ratio > 0.8 means Width is substantial compared to Height
     return dx > (dy * 0.8); 
+};
+
+// NEW HELPER: Detects if the palm is facing left or right from the camera's perspective.
+export const getPalmDirection = (hand) => {
+    if (!hand) return 'NONE';
+    const indexMCP = hand[5];  // Index finger knuckle
+    const pinkyMCP = hand[17]; // Pinky finger knuckle
+    if (!indexMCP || !pinkyMCP) return 'NONE';
+
+    // Check if the hand is seen from the side by comparing the horizontal vs vertical distance between knuckles.
+    const dx = indexMCP.x - pinkyMCP.x;
+    const dy = Math.abs(indexMCP.y - pinkyMCP.y);
+
+    // If knuckles are mostly stacked vertically, palm is likely facing the camera or away from it.
+    if (Math.abs(dx) < dy) return 'FRONT_OR_BACK';
+
+    if (dx > 0) {
+        return 'LEFT'; // Index knuckle is to the right of pinky knuckle -> palm faces left.
+    } else {
+        return 'RIGHT'; // Index knuckle is to the left of pinky knuckle -> palm faces right.
+    }
 };
 
 // --- MOTION DETECTORS ---
@@ -181,51 +242,65 @@ export const detectHorizontalWave = (history) => {
     return significantMove && isHorizontal && isOscillating;
 };
 
-// --- TELEMETRY ---
+// --- TELEMETRY ---  
+    // Updated to show Hand Open status for debugging Bridge Travel
+
+const getIndexStraightness = (hand) => {
+    if (!hand) return 0;
+    const tip = hand[8];
+    const pip = hand[6];
+    const wrist = hand[0];
+    if (!tip || !pip || !wrist) return 0;
+    const distTip = calculateDistance(tip, wrist);
+    const distPip = calculateDistance(pip, wrist);
+    if (distPip === 0) return 0;
+    return distTip / distPip;
+};
+
+const getHandFlatnessRatio = (hand) => {
+    if (!hand) return 0;
+    const wrist = hand[0];
+    const indexMCP = hand[5];
+    const pinkyMCP = hand[17];
+    if (!wrist || !indexMCP || !pinkyMCP) return 0;
+    const width = calculateDistance(indexMCP, pinkyMCP);
+    const height = Math.abs(wrist.y - indexMCP.y);
+    if (height === 0) return 0;
+    return width / height;
+};
+
 export const getDebugStats = (pose, lHand, rHand) => {
     if (!pose) return null;
     const getLevel = (wrist, shoulder) => (wrist.y - shoulder.y).toFixed(2);
-    
-    // Updated to show Hand Open status for debugging Bridge Travel
-    const getHandState = (hand) => {
-        if (!hand) return "None";
-        if (isPalmOpen(hand)) return "Open";
-        if (areOtherFingersCurled(hand)) return "Point";
-        return "Mix";
-    };
-
-    const getIndexStraightness = (hand) => {
-        if (!hand) return "0.00";
-        const wrist = hand[0];
-        const tipDist = calculateDistance(hand[8], wrist);
-        const knuckleDist = calculateDistance(hand[5], wrist); 
-        if (knuckleDist === 0) return "0.00";
-        return (tipDist / knuckleDist).toFixed(2);
-    };
-
-    const getHandFlatness = (hand) => {
-        if (!hand) return "0.00";
-        const wrist = hand[0];
-        const indexTip = hand[8];
-        const dx = Math.abs(indexTip.x - wrist.x);
-        const dy = Math.abs(indexTip.y - wrist.y);
-        if (dy < 0.001) return "99.0"; 
-        return (dx / dy).toFixed(2);
-    };
 
     const lShoulder = pose[11]; const lElbow = pose[13]; const lWrist = pose[15];
     const rShoulder = pose[12]; const rElbow = pose[14]; const rWrist = pose[16];
 
+    // For MAIN HOIST signal
+    const nose = pose[0];
+
     return {
+        // ARMS
         lArmAngle: calculateAngle(lShoulder, lElbow, lWrist).toFixed(0),
         rArmAngle: calculateAngle(rShoulder, rElbow, rWrist).toFixed(0),
         lWristLevel: getLevel(lWrist, lShoulder),
         rWristLevel: getLevel(rWrist, rShoulder),
-        lHandState: getHandState(lHand),
-        rHandState: getHandState(rHand),
-        lIndexRatio: getIndexStraightness(lHand),
-        rIndexRatio: getIndexStraightness(rHand),
-        lFlatRatio: getHandFlatness(lHand),
-        rFlatRatio: getHandFlatness(rHand),
+
+        // POSE
+        wristDistance: calculateDistance(lWrist, rWrist).toFixed(2),
+        lHandToHead: calculateDistance(lWrist, nose).toFixed(2),
+        rHandToHead: calculateDistance(rWrist, nose).toFixed(2),
+
+        // HANDS - Detailed Ratios
+        lIndexRatio: getIndexStraightness(lHand).toFixed(2),
+        rIndexRatio: getIndexStraightness(rHand).toFixed(2),
+        lFlatRatio: getHandFlatnessRatio(lHand).toFixed(2),
+        rFlatRatio: getHandFlatnessRatio(rHand).toFixed(2),
+
+        // THUMBS - Raw X/Y position relative to index knuckle
+        lThumbX: lHand ? (lHand[4].x - lHand[5].x).toFixed(2) : "0.00",
+        lThumbY: lHand ? (lHand[5].y - lHand[4].y).toFixed(2) : "0.00", // indexMCP.y - thumbTip.y
+        rThumbX: rHand ? (rHand[4].x - rHand[5].x).toFixed(2) : "0.00",
+        rThumbY: rHand ? (rHand[5].y - rHand[4].y).toFixed(2) : "0.00",
     };
 };

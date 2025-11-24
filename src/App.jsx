@@ -55,7 +55,7 @@ const AssessmentDrill = ({ mode, target, success, onStart, onNext }) => {
           {!target ? (
              <button onClick={onStart} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-xl w-full">Start Random Drill</button>
           ) : (
-             <div>
+              <div>
                 <div className="text-4xl font-black text-white mb-6">{target}</div>
                 {success ? (
                   <div className="text-green-500 font-bold text-xl animate-bounce">SUCCESS!</div>
@@ -91,10 +91,10 @@ const VoiceSubtitle = ({ text }) => {
   );
 };
 
-// --- 5. MAIN APP COMPONENT ---
+// --- 3. MAIN APP COMPONENT ---
 
 const App = () => {
-  const [mode, setMode] = useState('training'); 
+  const [mode, setMode] = useState('training');
   const [detectedSignal, setDetectedSignal] = useState('WAITING...');
   const [leftAngle, setLeftAngle] = useState(0);
   const [rightAngle, setRightAngle] = useState(0);
@@ -105,10 +105,7 @@ const App = () => {
   const [voiceCommand, setVoiceCommand] = useState('');
   const [isVoiceActive, setIsVoiceActive] = useState(false);
 
-  // 1. Create a Ref to hold the current value of showDebug
   const showDebugRef = useRef(showDebug);
-
-  // 2. Keep the Ref in sync with the State
   useEffect(() => {
     showDebugRef.current = showDebug;
   }, [showDebug]);
@@ -122,7 +119,6 @@ const App = () => {
   const leftWristHistory = useRef([]);
   const rightWristHistory = useRef([]);
 
-  // Voice Logic Stub
   const toggleVoice = () => {
       setIsVoiceActive(!isVoiceActive);
       if (!isVoiceActive) setVoiceCommand("Voice Mode: Mock Enabled");
@@ -164,23 +160,27 @@ const App = () => {
 
     if (results.poseLandmarks) {
       const pose = results.poseLandmarks;
-      
       const lIndex = results.leftHandLandmarks ? results.leftHandLandmarks[8] : null;
       const rIndex = results.rightHandLandmarks ? results.rightHandLandmarks[8] : null;
+      
       updateGeneralHistory(lIndex, leftIndexHistory);
       updateGeneralHistory(rIndex, rightIndexHistory);
       updateGeneralHistory(pose[15], leftWristHistory);
       updateGeneralHistory(pose[16], rightWristHistory);
 
+      // Angle calculation now imported from geometry.js
       setLeftAngle(calculateAngle(pose[11], pose[13], pose[15]));
       setRightAngle(calculateAngle(pose[12], pose[14], pose[16]));
 
+      // Debug Stats calculation imported from geometry.js
       if (showDebugRef.current) { 
           const stats = getDebugStats(pose, results.leftHandLandmarks, results.rightHandLandmarks);
           setDebugStats(stats);
       }
 
       let activeSignal = "NONE";
+      
+      // Signal Rules imported from signals.js
       for (const sig of Object.keys(SIGNAL_RULES)) {
           if (SIGNAL_RULES[sig](
               pose, 
@@ -216,7 +216,7 @@ const App = () => {
       });
 
       holistic.setOptions({
-        modelComplexity: 2, // HEAVY model for better hand tracking
+        modelComplexity: 1, 
         smoothLandmarks: true,
         enableSegmentation: false,
         refineFaceLandmarks: false,
@@ -246,7 +246,7 @@ const App = () => {
       setDrillSuccess(false);
   };
 
-return (
+  return (
     <div className="min-h-screen bg-slate-900 flex flex-col items-center text-white font-sans p-4">
       <div className="w-full max-w-5xl flex justify-between items-center mb-4 z-10">
         <div className="flex gap-4">
@@ -263,8 +263,9 @@ return (
             </button>
         </div>
       </div>
+
+      {/* SIDE-BY-SIDE LAYOUT */}
       <div className="flex flex-row justify-center gap-4 w-full px-4">
-          {/* VIDEO CONTAINER */}
           <div className="relative w-full max-w-5xl aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex items-center justify-center">
               {(!holisticLoaded) && (
                  <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900 text-white">
@@ -287,8 +288,8 @@ return (
                  <DebugPanel isVisible={showDebug} stats={debugStats} />
              </div>
           )}
-
       </div>
+
       {mode === 'training' && (
         <div className="mt-6 px-6 py-3 bg-slate-800 rounded-full border border-slate-700 text-slate-400 text-sm text-center">
             Try: <span className="text-yellow-400 font-bold">Extend Boom</span> (Thumbs OUT), <span className="text-yellow-400 font-bold">Swing Boom</span> (Blade Hand), or <span className="text-yellow-400 font-bold">Dog Everything</span>

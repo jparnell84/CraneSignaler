@@ -13,8 +13,24 @@ const DebugPanel = ({ stats, isVisible }) => {
 
   return (
     <div className="p-4 rounded-xl bg-slate-950/90 backdrop-blur border border-slate-700 w-72 font-mono text-xs text-slate-300 shadow-2xl h-fit">
-      <h3 className="text-white font-bold border-b border-slate-700 pb-2 mb-3 tracking-wider">TELEMERY DATA</h3>
+      <h3 className="text-white font-bold border-b border-slate-700 pb-2 mb-3 tracking-wider">TELEMETRY DATA</h3>
       
+      {/* POSE SECTION */}
+      <div>
+          <div className="text-purple-400 font-bold mb-1 border-b border-slate-800">POSE</div>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+              <span title="Distance between wrists">Wrist Dist:</span>
+              <span className={colorVal(stats.wristDistance, 0.15, 'lt')}>{stats.wristDistance}</span>
+              
+              <span title="Left hand to head">L Hand-Head:</span>
+              <span className={colorVal(stats.lHandToHead, 0.25, 'lt')}>{stats.lHandToHead}</span>
+
+              <span title="Right hand to head">R Hand-Head:</span>
+              <span className={colorVal(stats.rHandToHead, 0.25, 'lt')}>{stats.rHandToHead}</span>
+          </div>
+      </div>
+      <div className="border-t border-slate-700 my-2"></div>
+
       <div className="space-y-4">
         
         {/* RIGHT ARM SECTION */}
@@ -42,8 +58,11 @@ const DebugPanel = ({ stats, isVisible }) => {
                 <span title="Width / Height">Flat Ratio:</span>
                 <span className={colorVal(stats.rFlatRatio, 1.2)}>{stats.rFlatRatio}</span>
 
-                <span>Thumb X:</span>
-                <span>{stats.rThumbX}</span>
+                <span title="Thumb Tip X relative to Index Knuckle X">Thumb X:</span>
+                <span className="text-slate-400">{stats.rThumbX}</span>
+
+                <span title="Thumb Tip Y relative to Index Knuckle Y">Thumb Y:</span>
+                <span className="text-slate-400">{stats.rThumbY}</span>
             </div>
         </div>
 
@@ -72,8 +91,11 @@ const DebugPanel = ({ stats, isVisible }) => {
                 <span>Flat Ratio:</span>
                 <span className={colorVal(stats.lFlatRatio, 1.2)}>{stats.lFlatRatio}</span>
 
-                <span>Thumb X:</span>
-                <span>{stats.lThumbX}</span>
+                <span title="Thumb Tip X relative to Index Knuckle X">Thumb X:</span>
+                <span className="text-slate-400">{stats.lThumbX}</span>
+
+                <span title="Thumb Tip Y relative to Index Knuckle Y">Thumb Y:</span>
+                <span className="text-slate-400">{stats.lThumbY}</span>
             </div>
         </div>
 
@@ -81,7 +103,9 @@ const DebugPanel = ({ stats, isVisible }) => {
       
       <div className="mt-4 pt-2 border-t border-slate-700 text-[10px] text-gray-500 italic">
         * Idx Straight &gt; 1.1 = Pointing<br/>
-        * Flat Ratio &gt; 1.0 = Horizontal
+        * Flat Ratio &gt; 1.0 = Horizontal<br/>
+        * Thumb Y &gt; 0.05 = UP<br/>
+        * Thumb Y &lt; -0.05 = DOWN
       </div>
     </div>
   );

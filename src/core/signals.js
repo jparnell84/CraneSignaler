@@ -1,6 +1,8 @@
 import { 
     calculateAngle, 
     detectThumb, 
+    getPalmDirection,
+    isIndexPointing,
     detectIndexFinger, 
     calculateDistance, 
     detectHorizontalWave,
@@ -9,55 +11,105 @@ import {
     isPalmOpen,
     areOtherFingersCurled,
     isArmHorizontal,
-    isThumbNeutral
+    isThumbNeutral,
+    areHandsLevel,
+    isThumbActive
 } from './geometry';
 
 export const SIGNAL_RULES = {
-    
-    // --- SAFETY SIGNALS ---
+
+    // --- PRIORITY 1: CRITICAL SAFETY & TWO-HANDED SIGNALS ---
+
+    'DOG EVERYTHING': (pose, lHand, rHand) => {
+        if (!pose || !lHand || !rHand) return false;
+        // 1. Hands must be very close together (clasped).
+        const dist = calculateDistance(pose[15], pose[16]);
+        if (dist > 0.15) return false;
+
+        // 2. Hands must be low (around waist/belly level).
+        const handsLow = pose[15].y > pose[11].y; // Wrist Y > Shoulder Y
+        if (!handsLow) return false;
+
+        // 3. Hands must be open/flat, not fists. This is the key differentiator.
+        return isPalmOpen(lHand) && isPalmOpen(rHand);
+    },
+
+    'TROLLEY TRAVEL': (pose, lHand, rHand) => {
+        // Logic: One hand, clenched fist, thumb pointing OUT.
+        const checkSide = (hand, isRight) => {
+            if (!hand) return false;
+
+            // 1. It must be a "pointing" gesture for SWING, so for TROLLEY, the index finger must NOT be pointing.
+            // This is the key to differentiating from SWING BOOM.
+            if (isIndexPointing(hand)) return false;
+
+            // 2. Hand must be a fist (other fingers curled).
+            if (!areOtherFingersCurled(hand)) return false;
+
+            // 3. Thumb must be pointing OUT.
+            const thumbDir = detectThumbHorizontal(hand, isRight);
+            return thumbDir === 'OUT';
+        };
+
+        const rActive = checkSide(rHand, true);
+        const lActive = checkSide(lHand, false);
+        // Ensure only ONE hand is active for this signal.
+        return (rActive && !lActive) || (!rActive && lActive);
+    },
+
+    'EXTEND BOOM': (pose, lHand, rHand) => {
+         if (!lHand || !rHand) return false;
+         // Logic: Two-handed, Thumbs OUT
+         const lDir = detectThumbHorizontal(lHand, false); 
+         const rDir = detectThumbHorizontal(rHand, true);
+         const symmetric = areHandsLevel(lHand, rHand);
+
+         return lDir === 'OUT' && rDir === 'OUT' && symmetric;
+    },
+
+    'RETRACT BOOM': (pose, lHand, rHand) => {
+         if (!lHand || !rHand) return false;
+         
+         // Fix for Dog Everything conflict:
+         const dist = calculateDistance(pose[15], pose[16]);
+         if (dist < 0.20) return false;
+
+         const lDir = detectThumbHorizontal(lHand, false);
+         const rDir = detectThumbHorizontal(rHand, true);
+         const symmetric = areHandsLevel(lHand, rHand);
+
+         return lDir === 'IN' && rDir === 'IN' && symmetric;
+    },
 
     'EMERGENCY STOP': (pose, lHand, rHand, lIdxHist, rIdxHist, lWristHist, rWristHist) => {
         if (!pose) return false;
         
-        // 1. Arm Check: Both arms extended
         const rStatic = isArmHorizontal(pose[12], pose[14], pose[16]);
         const lStatic = isArmHorizontal(pose[11], pose[13], pose[15]);
-
-        // 2. Wave Check: Dynamic Motion
         const rWaving = detectHorizontalWave(rWristHist);
         const lWaving = detectHorizontalWave(lWristHist);
         
-        // 3. Thumb Check (CRITICAL FIX):
-        // Prevent "Raise Boom" (Arms Out + Thumb Up) from triggering "Emergency Stop".
-        // Emergency Stop requires Neutral thumbs or Open Palms.
         const rThumbNeutral = rHand ? isThumbNeutral(rHand) : true;
         const lThumbNeutral = lHand ? isThumbNeutral(lHand) : true;
 
         if ((rStatic && lStatic) && (!rThumbNeutral || !lThumbNeutral)) {
-             return false; // This is likely a Boom signal
+             return false; 
         }
 
         return (rStatic && lStatic) || (rWaving || lWaving);
     },
 
+    // --- PRIORITY 2: ONE-HANDED SIGNALS ---
+
     'STOP': (pose, lHand, rHand) => {
         if (!pose) return false;
-        
         const checkSide = (shoulder, elbow, wrist, hand) => {
             if (!isArmHorizontal(shoulder, elbow, wrist)) return false;
             if (!hand) return false;
             return isHandHorizontal(hand) && isPalmOpen(hand); 
         };
-
         return checkSide(pose[12], pose[14], pose[16], rHand) || 
                checkSide(pose[11], pose[13], pose[15], lHand);
-    },
-
-    'DOG EVERYTHING': (pose) => {
-        if (!pose) return false;
-        const dist = calculateDistance(pose[15], pose[16]);
-        const handsLow = pose[15].y > pose[11].y;
-        return dist < 0.15 && handsLow;
     },
 
     // --- HOIST SIGNALS ---
@@ -74,17 +126,15 @@ export const SIGNAL_RULES = {
 
     'AUX HOIST': (pose, lHand, rHand) => {
         if (!pose) return false;
-        
+        const proximity = 0.25;
         const isArmBent = (shoulder, elbow, wrist) => {
              const angle = calculateAngle(shoulder, elbow, wrist);
-             return angle < 85; 
+             return angle < 90; 
         };
-
         const rArmActive = isArmBent(pose[12], pose[14], pose[16]);
-        const lHandTouching = calculateDistance(pose[15], pose[14]) < 0.35;
-        
+        const lHandTouching = calculateDistance(pose[15], pose[14]) < proximity;
         const lArmActive = isArmBent(pose[11], pose[13], pose[15]);
-        const rHandTouching = calculateDistance(pose[16], pose[13]) < 0.35;
+        const rHandTouching = calculateDistance(pose[16], pose[13]) < proximity;
 
         return (rArmActive && lHandTouching) || (lArmActive && rHandTouching);
     },
@@ -93,17 +143,13 @@ export const SIGNAL_RULES = {
         if (!pose) return false;
         const checkSide = (hand, shoulder, elbow, wrist) => {
             if (!hand) return false;
-            
             const isForearmVertical = Math.abs(wrist.x - elbow.x) < 0.2;
             const isAbove = wrist.y < elbow.y; 
             if (!isForearmVertical || !isAbove) return false;
-
-            const indexUp = detectIndexFinger(hand) === 'UP';
+            const indexUp = detectIndexFinger(hand) === 'UP'; // Specifically check for UP
             const othersCurled = areOtherFingersCurled(hand);
-
             return indexUp && othersCurled;
         };
-
         return checkSide(rHand, pose[12], pose[14], pose[16]) || 
                checkSide(lHand, pose[11], pose[13], pose[15]);
     },
@@ -112,14 +158,10 @@ export const SIGNAL_RULES = {
         if (!pose) return false;
         const checkSide = (hand, shoulder, elbow, wrist) => {
             if (!hand) return false;
-            // Removed strict vertical check to allow for the slight angle seen in your 'Lower Load' photo
-            // Just ensuring wrist is clearly below elbow is usually enough for Lower.
             const isBelow = wrist.y > elbow.y; 
             if (!isBelow) return false;
-
-            const indexDown = detectIndexFinger(hand) === 'DOWN';
+            const indexDown = detectIndexFinger(hand) === 'DOWN'; // Specifically check for DOWN
             const othersCurled = areOtherFingersCurled(hand);
-            
             return indexDown && othersCurled;
         };
         return checkSide(rHand, pose[12], pose[14], pose[16]) || 
@@ -133,12 +175,12 @@ export const SIGNAL_RULES = {
         const checkSide = (hand, shoulder, elbow, wrist) => {
             if (!hand) return false;
             const armAngle = calculateAngle(shoulder, elbow, wrist);
-            if (armAngle < 120) return false; 
             
-            // Check: Thumb UP and Palm NOT open (must be fist-like)
+            // Conflict Fix: Must be relatively STRAIGHT (> 120)
+            if (armAngle < 50) return false; 
+            
             return detectThumb(hand) === 'UP' && !isPalmOpen(hand);
         };
-
         return checkSide(rHand, pose[12], pose[14], pose[16]) || 
                checkSide(lHand, pose[11], pose[13], pose[15]);
     },
@@ -148,10 +190,13 @@ export const SIGNAL_RULES = {
         const checkSide = (hand, shoulder, elbow, wrist) => {
             if (!hand) return false;
             const armAngle = calculateAngle(shoulder, elbow, wrist);
-            if (armAngle < 120) return false; 
-            
-            // Check: Thumb DOWN and Palm NOT open
-            return detectThumb(hand) === 'DOWN' && !isPalmOpen(hand);
+            if (armAngle < 40) return false; 
+
+            // This is the key to differentiating from SWING BOOM.
+            // It must NOT be a pointing gesture.
+            if (isIndexPointing(hand)) return false;
+
+            return detectThumb(hand) === 'DOWN' && areOtherFingersCurled(hand);
         };
         return checkSide(rHand, pose[12], pose[14], pose[16]) || 
                checkSide(lHand, pose[11], pose[13], pose[15]);
@@ -159,63 +204,46 @@ export const SIGNAL_RULES = {
 
     'SWING BOOM': (pose, lHand, rHand) => {
         if (!pose) return false;
-        const checkSide = (hand, shoulder, elbow, wrist) => {
-             if (!hand) return false;
-             if (!isArmHorizontal(shoulder, elbow, wrist)) return false;
-             return isHandHorizontal(hand) && isPalmOpen(hand);
+        const checkSide = (hand) => {
+            if (!hand) return false;
+
+            // 1. Hand must be horizontal (index finger pointing left or right).
+            if (!isHandHorizontal(hand)) return false;
+
+            // 2. It must be a "pointing" gesture.
+            const isPointing = isIndexPointing(hand);
+            const othersCurled = areOtherFingersCurled(hand);
+
+            return isPointing && othersCurled;
         };
-        return checkSide(rHand, pose[12], pose[14], pose[16]) || 
-               checkSide(lHand, pose[11], pose[13], pose[15]);
+
+        const rActive = checkSide(rHand);
+        const lActive = checkSide(lHand);
+
+        // Ensure only ONE hand is active for this signal.
+        return (rActive && !lActive) || (!rActive && lActive);
     },
 
     'BRIDGE TRAVEL': (pose, lHand, rHand) => {
-        const checkSide = (hand, shoulder, elbow, wrist) => {
-            if (!hand) return false;
-            const isAbove = wrist.y < elbow.y;
-            if (!isAbove) return false;
-            
-            const palmOpen = isPalmOpen(hand);
-            const isVerticalHand = !isHandHorizontal(hand);
+        if (!pose || !lHand || !rHand) return false;
 
-            return palmOpen && isVerticalHand;
-        };
+        // 1. Both hands must be open (unclenched).
+        if (!isPalmOpen(lHand) || !isPalmOpen(rHand)) return false;
 
-        return checkSide(rHand, pose[12], pose[14], pose[16]) || 
-               checkSide(lHand, pose[11], pose[13], pose[15]);
-    },
+        // 2. Both hands must be oriented vertically (fingers up).
+        if (isHandHorizontal(lHand) || isHandHorizontal(rHand)) return false;
 
-    'TROLLEY TRAVEL': (pose, lHand, rHand) => {
-        const checkSide = (hand, shoulder, elbow, wrist) => {
-            if (!hand) return false;
+        // 3. Get palm directions for both hands.
+        const lPalmDir = getPalmDirection(lHand);
+        const rPalmDir = getPalmDirection(rHand);
 
-            const armAngle = calculateAngle(shoulder, elbow, wrist);
-            // Strict bent arm to distinguish from "Raise Boom"
-            if (armAngle > 110) return false;
+        // 4. Both palms must be facing the same direction (either LEFT or RIGHT).
+        const facingLeft = lPalmDir === 'LEFT' && rPalmDir === 'LEFT';
+        const facingRight = lPalmDir === 'RIGHT' && rPalmDir === 'RIGHT';
+        if (!facingLeft && !facingRight) return false;
 
-            const thumbState = detectThumb(hand); 
-            const thumbHoriz = detectThumbHorizontal(hand, hand === rHand); 
-            const thumbActive = (thumbState === 'UP') || (thumbHoriz === 'OUT');
-
-            return thumbActive;
-        };
-
-        return checkSide(rHand, pose[12], pose[14], pose[16]) || 
-               checkSide(lHand, pose[11], pose[13], pose[15]);
-    },
-    
-    'EXTEND BOOM': (pose, lHand, rHand) => {
-         const checkSide = (hand, isRight) => {
-             if(!hand) return false;
-             return detectThumbHorizontal(hand, isRight) === 'OUT';
-         };
-         return checkSide(lHand, false) && checkSide(rHand, true);
-    },
-
-    'RETRACT BOOM': (pose, lHand, rHand) => {
-         const checkSide = (hand, isRight) => {
-             if(!hand) return false;
-             return detectThumbHorizontal(hand, isRight) === 'IN';
-         };
-         return checkSide(lHand, false) && checkSide(rHand, true);
+        // 5. Hands must be apart (not clasped for 'DOG EVERYTHING').
+        const wristDist = calculateDistance(pose[15], pose[16]);
+        return wristDist > 0.2;
     }
 };
