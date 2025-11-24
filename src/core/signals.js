@@ -7,8 +7,6 @@ import {
     detectRepetitiveMotion,
     detectHorizontalWave,
     detectThumbHorizontal,
-    areFingersExtended,
-    isHandHorizontal 
 } from './geometry';
 
 export const SIGNAL_RULES = {
@@ -132,28 +130,28 @@ export const SIGNAL_RULES = {
     // --- BOOM SIGNALS ---
     'SWING BOOM': (pose, lHand, rHand) => {
         if (!pose) return false;
+        
+        const checkSide = (hand) => {
+            if (!hand) return false;
 
-        const checkSide = (shoulder, elbow, wrist, hand) => {
-            // 1. Pose: Arm Straight Horizontal
-            const armStraight = calculateAngle(shoulder, elbow, wrist) > 140;
-            // Y difference small = horizontal
-            const armHorizontal = Math.abs(shoulder.y - wrist.y) < 0.2;
-            
-            if (!armStraight || !armHorizontal) return false;
+            // 1. Hand Direction: RELAXED Horizontal Check
+            const wrist = hand[0];
+            const indexTip = hand[8];
+            const dx = Math.abs(indexTip.x - wrist.x);
+            const dy = Math.abs(indexTip.y - wrist.y);
+            const isFlat = dx > (dy * 0.8);
 
-            // 2. Hand Shape: "Blade Hand" (All fingers extended)
-            // This distinguishes it from a fist or pointing finger
-            if (!hand) return false; 
-            const isBlade = areFingersExtended(hand);
-            const isFlat = isHandHorizontal(hand);
+            // 2. Index Finger: ROBUST Straight Check.
+            const wristDist = (idx) => Math.sqrt(
+                Math.pow(hand[idx].x - wrist.x, 2) + Math.pow(hand[idx].y - wrist.y, 2)
+            );
+            const indexStraight = wristDist(8) > wristDist(5);
 
-            return isBlade && isFlat;
+            return isFlat && indexStraight;
         };
 
-        // Check Right Arm (Active)
-        const rActive = checkSide(pose[12], pose[14], pose[16], rHand);
-        // Check Left Arm (Active)
-        const lActive = checkSide(pose[11], pose[13], pose[15], lHand);
+        const rActive = checkSide(rHand);
+        const lActive = checkSide(lHand);
 
         return rActive || lActive;
     },

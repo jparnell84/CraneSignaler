@@ -1,5 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import DebugPanel from './components/DebugPanel';
+import { getDebugStats, calculateAngle } from './core/geometry';
+import { SIGNAL_RULES } from './core/signals';
 
 // --- 1. UTILITY: Script Loader for MediaPipe ---
 const useMediaPipeScript = (url) => {
@@ -16,313 +18,7 @@ const useMediaPipeScript = (url) => {
   return loaded;
 };
 
-// --- 2. GEOMETRY & MATH HELPERS ---
-
-const calculateAngle = (a, b, c) => {
-    if (!a || !b || !c) return 0;
-    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-    let angle = Math.abs(radians * 180.0 / Math.PI);
-    if (angle > 180.0) angle = 360 - angle;
-    return angle;
-};
-
-const calculateDistance = (point1, point2) => {
-    if (!point1 || !point2) return 1.0; 
-    return Math.sqrt(Math.pow(point1.x - point2.x, 2) + Math.pow(point1.y - point2.y, 2));
-};
-
-const detectThumb = (handLandmarks) => {
-    if (!handLandmarks) return "NONE";
-    const thumbTip = handLandmarks[4];
-    const indexMCP = handLandmarks[5]; 
-    const wrist = handLandmarks[0];
-    if (!thumbTip || !indexMCP || !wrist) return "NONE";
-
-    const tipToKnuckle = indexMCP.y - thumbTip.y; 
-    const threshold = Math.abs(wrist.y - indexMCP.y) * 0.5; 
-
-    if (tipToKnuckle > threshold) return "UP";
-    if (tipToKnuckle < -threshold) return "DOWN";
-    return "NEUTRAL";
-};
-
-const detectThumbHorizontal = (handLandmarks, isRightHand) => {
-    if (!handLandmarks) return "NONE";
-    const thumbTip = handLandmarks[4];
-    const indexMCP = handLandmarks[5]; 
-    const wrist = handLandmarks[0]; 
-    if (!thumbTip || !indexMCP) return "NONE";
-
-    const diff = thumbTip.x - indexMCP.x;
-    const handSize = calculateDistance(wrist, indexMCP);
-    const threshold = handSize * 0.2;
-
-    if (isRightHand) {
-        if (diff < -threshold) return "OUT";
-        if (diff > threshold) return "IN";
-    } else {
-        if (diff > threshold) return "OUT";
-        if (diff < -threshold) return "IN";
-    }
-    return "NEUTRAL";
-};
-
-const detectIndexFinger = (handLandmarks) => {
-    if (!handLandmarks) return "NONE";
-    const tip = handLandmarks[8];
-    const pip = handLandmarks[6];
-    const wrist = handLandmarks[0];
-    if (!tip || !pip) return "NONE";
-
-    const threshold = Math.abs(wrist.y - pip.y) * 0.2;
-    if (tip.y < pip.y - threshold) return "UP";
-    if (tip.y > pip.y + threshold) return "DOWN";
-    return "NEUTRAL";
-};
-
-const isFingerCurled = (landmarks, tipIdx, pipIdx) => {
-    if (!landmarks) return false;
-    const wrist = landmarks[0];
-    const tip = landmarks[tipIdx];
-    const pip = landmarks[pipIdx];
-    const distTipToWrist = calculateDistance(tip, wrist);
-    const distPipToWrist = calculateDistance(pip, wrist);
-    return distTipToWrist < distPipToWrist;
-};
-
-const areFingersExtended = (hand) => {
-    if (!hand) return false;
-    const wrist = hand[0];
-    const checkFinger = (tipIdx, pipIdx) => {
-        const tip = hand[tipIdx];
-        const pip = hand[pipIdx];
-        return calculateDistance(tip, wrist) > calculateDistance(pip, wrist);
-    };
-    return checkFinger(8,6) && checkFinger(12,10) && checkFinger(16,14) && checkFinger(20,18);
-};
-
-const isHandHorizontal = (hand) => {
-    if (!hand) return false;
-    const wrist = hand[0];
-    const indexTip = hand[8]; 
-    const dx = Math.abs(indexTip.x - wrist.x);
-    const dy = Math.abs(indexTip.y - wrist.y);
-    return dx > dy * 1.2;
-};
-
-const detectRepetitiveMotion = (history) => {
-    if (history.length < 10) return false;
-    let minX = 1, maxX = 0, minY = 1, maxY = 0;
-    let totalPathLength = 0;
-
-    for (let i = 0; i < history.length; i++) {
-        const p = history[i];
-        if(p.x < minX) minX = p.x;
-        if(p.x > maxX) maxX = p.x;
-        if(p.y < minY) minY = p.y;
-        if(p.y > maxY) maxY = p.y;
-        if (i > 0) {
-            const prev = history[i-1];
-            totalPathLength += Math.sqrt(Math.pow(p.x - prev.x, 2) + Math.pow(p.y - prev.y, 2));
-        }
-    }
-
-    const boxWidth = maxX - minX;
-    const boxHeight = maxY - minY;
-    const boxDiagonal = Math.sqrt(Math.pow(boxWidth, 2) + Math.pow(boxHeight, 2));
-
-    if (boxDiagonal < 0.02) return false;
-    const ratio = totalPathLength / boxDiagonal;
-    return ratio > 1.2; 
-};
-
-const detectHorizontalWave = (history) => {
-    if (history.length < 5) return false;
-    let minX = 1, maxX = 0, minY = 1, maxY = 0;
-    let totalPath = 0;
-
-    for (let i = 0; i < history.length; i++) {
-        const p = history[i];
-        if(p.x < minX) minX = p.x;
-        if(p.x > maxX) maxX = p.x;
-        if(p.y < minY) minY = p.y;
-        if(p.y > maxY) maxY = p.y;
-        if (i > 0) {
-            const prev = history[i-1];
-            totalPath += Math.sqrt(Math.pow(p.x - prev.x, 2) + Math.pow(p.y - prev.y, 2));
-        }
-    }
-
-    const width = maxX - minX;
-    const height = maxY - minY;
-    const significantMove = width > 0.15;
-    const isHorizontal = width > (height * 1.5);
-    const isOscillating = totalPath > width * 1.2;
-
-    return significantMove && isHorizontal && isOscillating;
-};
-
-const getDebugStats = (pose, lHand, rHand) => {
-    if (!pose) return {};
-    return {
-        wristDist: calculateDistance(pose[15], pose[16]).toFixed(3),
-        handsLow: (pose[15].y > pose[11].y).toString(),
-        lArmAngle: calculateAngle(pose[11], pose[13], pose[15]).toFixed(0),
-        rArmAngle: calculateAngle(pose[12], pose[14], pose[16]).toFixed(0),
-        lHandBlade: lHand ? areFingersExtended(lHand).toString() : "No Hand",
-        rHandBlade: rHand ? areFingersExtended(rHand).toString() : "No Hand",
-        lHandFlat: lHand ? isHandHorizontal(lHand).toString() : "No Hand",
-        rHandFlat: rHand ? isHandHorizontal(rHand).toString() : "No Hand",
-        lThumbHoriz: lHand ? detectThumbHorizontal(lHand, false) : "None",
-        rThumbHoriz: rHand ? detectThumbHorizontal(rHand, true) : "None"
-    };
-};
-
-// --- 3. SIGNAL RULES ---
-
-const SIGNAL_RULES = {
-    'EMERGENCY STOP': (pose, lHand, rHand, lIdxHist, rIdxHist, lWristHist, rWristHist) => {
-        if (!pose) return false;
-        const rShoulder = pose[12]; const rElbow = pose[14];
-        const lShoulder = pose[11]; const lElbow = pose[13];
-        const upperArmsHorizontal = Math.abs(rShoulder.y - rElbow.y) < 0.15 && Math.abs(lShoulder.y - lElbow.y) < 0.15;
-        if (!upperArmsHorizontal) return false;
-        const rWaving = detectHorizontalWave(rWristHist);
-        const lWaving = detectHorizontalWave(lWristHist);
-        return rWaving || lWaving;
-    },
-
-    'DOG EVERYTHING': (pose) => {
-        if (!pose) return false;
-        const dist = calculateDistance(pose[15], pose[16]);
-        const handsLow = pose[15].y > pose[11].y; 
-        return dist < 0.12 && handsLow;
-    },
-
-    'MAIN HOIST': (pose) => {
-        if (!pose) return false;
-        const nose = pose[0];
-        const rWrist = pose[16];
-        const lWrist = pose[15];
-        const rOnHead = rWrist.y < nose.y && calculateDistance(rWrist, nose) < 0.25;
-        const lOnHead = lWrist.y < nose.y && calculateDistance(lWrist, nose) < 0.25;
-        return rOnHead || lOnHead;
-    },
-
-    'AUX HOIST': (pose, lHand, rHand) => {
-        if (!pose) return false;
-        const isVerticalForearm = (shoulder, elbow, wrist) => {
-            const angle = calculateAngle(shoulder, elbow, wrist);
-            if (angle < 20 || angle > 70) return false; 
-            const isVertical = Math.abs(wrist.x - elbow.x) < 0.15; 
-            const isAbove = wrist.y < elbow.y; 
-            return isVertical && isAbove;
-        };
-        const threshold = 0.3;
-        const rArmActive = isVerticalForearm(pose[12], pose[14], pose[16]);
-        const lHandTouching = calculateDistance(pose[15], pose[14]) < threshold;
-        const lArmActive = isVerticalForearm(pose[11], pose[13], pose[15]);
-        const rHandTouching = calculateDistance(pose[16], pose[13]) < threshold;
-        return (rArmActive && lHandTouching) || (lArmActive && rHandTouching);
-    },
-
-    'HOIST LOAD': (pose, lHand, rHand, lIndexHist, rIndexHist) => {
-        if (!pose) return false;
-        const checkSide = (hand, history, shoulder, elbow, wrist, otherWristIndex, activeElbowIndex) => {
-            if (!hand || !history) return false;
-            const isForearmVertical = Math.abs(wrist.x - elbow.x) < 0.25;
-            const isAbove = wrist.y < elbow.y; 
-            if (!isForearmVertical || !isAbove) return false;
-            const indexUp = detectIndexFinger(hand) === 'UP';
-            const indexStraight = !isFingerCurled(hand, 8, 6); 
-            if (!indexUp || !indexStraight) return false;
-            const otherWrist = pose[otherWristIndex];
-            const activeElbow = pose[activeElbowIndex];
-            if (calculateDistance(otherWrist, activeElbow) < 0.3) return false;
-            return detectRepetitiveMotion(history);
-        };
-        const rActive = checkSide(rHand, rIndexHist, pose[12], pose[14], pose[16], 15, 14);
-        const lActive = checkSide(lHand, lIndexHist, pose[11], pose[13], pose[15], 16, 13);
-        return rActive || lActive;
-    },
-
-    'LOWER LOAD': (pose, lHand, rHand, lIndexHist, rIndexHist) => {
-        if (!pose) return false;
-        const checkSide = (hand, history, shoulder, elbow, wrist, otherWristIndex, activeElbowIndex) => {
-            if (!hand || !history) return false;
-            const isForearmVertical = Math.abs(wrist.x - elbow.x) < 0.25;
-            const isBelow = wrist.y > elbow.y; 
-            if (!isForearmVertical || !isBelow) return false;
-            const indexDown = detectIndexFinger(hand) === 'DOWN';
-            const indexStraight = !isFingerCurled(hand, 8, 6);
-            if (!indexDown || !indexStraight) return false;
-            const otherWrist = pose[otherWristIndex];
-            const activeElbow = pose[activeElbowIndex];
-            if (calculateDistance(otherWrist, activeElbow) < 0.3) return false;
-            return detectRepetitiveMotion(history);
-        };
-        const rActive = checkSide(rHand, rIndexHist, pose[12], pose[14], pose[16], 15, 14);
-        const lActive = checkSide(lHand, lIndexHist, pose[11], pose[13], pose[15], 16, 13);
-        return rActive || lActive;
-    },
-
-    'SWING BOOM': (pose, lHand, rHand) => {
-        if (!pose) return false;
-        const checkSide = (shoulder, elbow, wrist, hand, otherWrist, activeElbow) => {
-            const armStraight = calculateAngle(shoulder, elbow, wrist) > 140;
-            if (!armStraight) return false;
-            const touchingElbow = calculateDistance(otherWrist, activeElbow) < 0.25;
-            if (!touchingElbow) return false;
-            if (!hand) return false; 
-            const fingersExtended = areFingersExtended(hand);
-            const handHorizontal = isHandHorizontal(hand);
-            return fingersExtended && handHorizontal;
-        };
-        const rActive = checkSide(pose[12], pose[14], pose[16], rHand, pose[15], pose[14]);
-        const lActive = checkSide(pose[11], pose[13], pose[15], lHand, pose[16], pose[13]);
-        return rActive || lActive;
-    },
-
-    'RAISE BOOM': (pose, lHand, rHand) => {
-        if (!pose) return false;
-        const lThumb = detectThumb(lHand);
-        const rThumb = detectThumb(rHand);
-        const rArm = calculateAngle(pose[12], pose[14], pose[16]);
-        const lArm = calculateAngle(pose[11], pose[13], pose[15]);
-        const armOut = rArm > 130 || lArm > 130;
-        return armOut && (lThumb === 'UP' || rThumb === 'UP');
-    },
-
-    'LOWER BOOM': (pose, lHand, rHand) => {
-        if (!pose) return false;
-        const lThumb = detectThumb(lHand);
-        const rThumb = detectThumb(rHand);
-        const rArm = calculateAngle(pose[12], pose[14], pose[16]);
-        const lArm = calculateAngle(pose[11], pose[13], pose[15]);
-        const armOut = rArm > 130 || lArm > 130;
-        return armOut && (lThumb === 'DOWN' || rThumb === 'DOWN');
-    },
-
-    'EXTEND BOOM': (pose, lHand, rHand) => {
-        const isFist = (hand) => isFingerCurled(hand, 8, 6); 
-        const lDir = detectThumbHorizontal(lHand, false); 
-        const rDir = detectThumbHorizontal(rHand, true);
-        const lFist = lHand ? isFist(lHand) : false;
-        const rFist = rHand ? isFist(rHand) : false;
-        return lDir === 'OUT' && rDir === 'OUT' && lFist && rFist;
-    },
-
-    'RETRACT BOOM': (pose, lHand, rHand) => {
-        const isFist = (hand) => isFingerCurled(hand, 8, 6);
-        const lDir = detectThumbHorizontal(lHand, false);
-        const rDir = detectThumbHorizontal(rHand, true);
-        const lFist = lHand ? isFist(lHand) : false;
-        const rFist = rHand ? isFist(rHand) : false;
-        return lDir === 'IN' && rDir === 'IN' && lFist && rFist;
-    },
-};
-
-// --- 4. UI COMPONENTS ---
+// --- 2. UI COMPONENTS ---
 
 const HUD = ({ mode, leftAngle, rightAngle, signal }) => {
   if (mode !== 'training') return null;
@@ -409,6 +105,14 @@ const App = () => {
   const [voiceCommand, setVoiceCommand] = useState('');
   const [isVoiceActive, setIsVoiceActive] = useState(false);
 
+  // 1. Create a Ref to hold the current value of showDebug
+  const showDebugRef = useRef(showDebug);
+
+  // 2. Keep the Ref in sync with the State
+  useEffect(() => {
+    showDebugRef.current = showDebug;
+  }, [showDebug]);
+
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
   const cameraRef = useRef(null);
@@ -471,7 +175,7 @@ const App = () => {
       setLeftAngle(calculateAngle(pose[11], pose[13], pose[15]));
       setRightAngle(calculateAngle(pose[12], pose[14], pose[16]));
 
-      if (showDebug) {
+      if (showDebugRef.current) { 
           const stats = getDebugStats(pose, results.leftHandLandmarks, results.rightHandLandmarks);
           setDebugStats(stats);
       }
@@ -498,7 +202,7 @@ const App = () => {
       }
     }
     canvasCtx.restore();
-  }, [mode, drillTarget, showDebug]);
+  }, [mode, drillTarget]);
 
   // Load scripts
   const holisticLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js");
