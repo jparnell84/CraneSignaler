@@ -12,13 +12,34 @@ export const calculateDistance = (point1, point2) => {
     return Math.sqrt(Math.pow(point1.x - point2.x, 2) + Math.pow(point1.y - point2.y, 2));
 };
 
-// --- HAND DETECTORS ---
+// --- POSTURE HELPERS ---
+
+// Checks if arm is roughly horizontal (Y-level) AND roughly straight (Angle)
+// LENIENCY UPDATE: Angle threshold lowered to 125 to accommodate mobile cameras
+export const isArmHorizontal = (shoulder, elbow, wrist) => {
+    if (!shoulder || !elbow || !wrist) return false;
+
+    // 1. Angle Check: Is it roughly straight?
+    const angle = calculateAngle(shoulder, elbow, wrist);
+    if (angle < 125) return false; 
+
+    // 2. Level Check: Is wrist roughly at shoulder height?
+    // Mobile Leniency: Increased Y tolerance to 0.25 (approx head height to chest height range)
+    const yDiff = Math.abs(wrist.y - shoulder.y);
+    if (yDiff > 0.25) return false;
+
+    return true;
+};
+
+// --- HAND HELPERS ---
+
 export const detectThumb = (handLandmarks) => {
     if (!handLandmarks) return "NONE";
     const thumbTip = handLandmarks[4];
     const indexMCP = handLandmarks[5]; 
     const wrist = handLandmarks[0];
     if (!thumbTip || !indexMCP || !wrist) return "NONE";
+
     const tipToKnuckle = indexMCP.y - thumbTip.y; 
     const threshold = Math.abs(wrist.y - indexMCP.y) * 0.5; 
 
@@ -27,15 +48,21 @@ export const detectThumb = (handLandmarks) => {
     return "NEUTRAL";
 };
 
+export const isThumbNeutral = (handLandmarks) => {
+    return detectThumb(handLandmarks) === "NEUTRAL";
+};
+
 export const detectThumbHorizontal = (handLandmarks, isRightHand) => {
     if (!handLandmarks) return "NONE";
     const thumbTip = handLandmarks[4];
     const indexMCP = handLandmarks[5]; 
     const wrist = handLandmarks[0]; 
     if (!thumbTip || !indexMCP) return "NONE";
+
     const diff = thumbTip.x - indexMCP.x;
     const handSize = calculateDistance(wrist, indexMCP);
     const threshold = handSize * 0.2;
+
     if (isRightHand) {
         if (diff < -threshold) return "OUT";
         if (diff > threshold) return "IN";
@@ -51,10 +78,17 @@ export const detectIndexFinger = (handLandmarks) => {
     const tip = handLandmarks[8];
     const pip = handLandmarks[6];
     const wrist = handLandmarks[0];
-    if (!tip || !pip) return "NONE";
-    const threshold = Math.abs(wrist.y - pip.y) * 0.2;
-    if (tip.y < pip.y - threshold) return "UP";
-    if (tip.y > pip.y + threshold) return "DOWN";
+    
+    // Check 1: Verticality (Tip above Knuckle)
+    const isVertical = tip.y < pip.y; 
+    
+    // Check 2: Straightness (Tip further from wrist than knuckle)
+    const distTip = calculateDistance(tip, wrist);
+    const distPip = calculateDistance(pip, wrist);
+    const isStraight = distTip > distPip * 1.1;
+
+    if (isVertical && isStraight) return "UP";
+    if (tip.y > pip.y && isStraight) return "DOWN";
     return "NEUTRAL";
 };
 
@@ -62,30 +96,42 @@ export const isFingerCurled = (landmarks, tipIdx, pipIdx) => {
     if (!landmarks) return false;
     const wrist = landmarks[0];
     const tip = landmarks[tipIdx];
-    const pip = landmarks[pipIdx]; // Can also use base knuckle (idx 5, 9, etc) for pointing checks
+    const pip = landmarks[pipIdx];
     const distTipToWrist = calculateDistance(tip, wrist);
     const distPipToWrist = calculateDistance(pip, wrist);
     return distTipToWrist < distPipToWrist;
 };
 
-export const areFingersExtended = (hand) => {
+// Essential for distinguishing "Pointing" (Hoist) from "Open Hand" (Bridge/Stop)
+export const areOtherFingersCurled = (hand) => {
+    if (!hand) return false;
+    return isFingerCurled(hand, 12, 10) && // Middle
+           isFingerCurled(hand, 16, 14) && // Ring
+           isFingerCurled(hand, 20, 18);   // Pinky
+};
+
+export const isPalmOpen = (hand) => {
     if (!hand) return false;
     const wrist = hand[0];
-    const checkFinger = (tipIdx, pipIdx) => {
+    const isExtended = (tipIdx, pipIdx) => {
         const tip = hand[tipIdx];
         const pip = hand[pipIdx];
-        return calculateDistance(tip, wrist) > calculateDistance(pip, wrist);
+        // Tip must be further from wrist than knuckle
+        return calculateDistance(tip, wrist) > calculateDistance(pip, wrist) * 1.05; 
     };
-    return checkFinger(8,6) && checkFinger(12,10) && checkFinger(16,14) && checkFinger(20,18);
+    return isExtended(8,6) && isExtended(12,10) && isExtended(16,14) && isExtended(20,18);
 };
 
 export const isHandHorizontal = (hand) => {
     if (!hand) return false;
     const wrist = hand[0];
     const indexTip = hand[8]; 
+    
     const dx = Math.abs(indexTip.x - wrist.x);
     const dy = Math.abs(indexTip.y - wrist.y);
-    return dx > dy * 1.2;
+    
+    // Ratio > 0.8 means Width is substantial compared to Height
+    return dx > (dy * 0.8); 
 };
 
 // --- MOTION DETECTORS ---
@@ -135,26 +181,28 @@ export const detectHorizontalWave = (history) => {
     return significantMove && isHorizontal && isOscillating;
 };
 
-// --- TELEMETRY / DEBUG STATS ---
-// This is the CRITICAL function that feeds the Debug Panel
+// --- TELEMETRY ---
 export const getDebugStats = (pose, lHand, rHand) => {
     if (!pose) return null;
-
-    // Helper to get relative Y (positive = lower on screen)
     const getLevel = (wrist, shoulder) => (wrist.y - shoulder.y).toFixed(2);
+    
+    // Updated to show Hand Open status for debugging Bridge Travel
+    const getHandState = (hand) => {
+        if (!hand) return "None";
+        if (isPalmOpen(hand)) return "Open";
+        if (areOtherFingersCurled(hand)) return "Point";
+        return "Mix";
+    };
 
-    // Helper to check index finger straightness raw logic
     const getIndexStraightness = (hand) => {
         if (!hand) return "0.00";
         const wrist = hand[0];
-        // Compare Tip(8) dist vs Base Knuckle(5) dist
         const tipDist = calculateDistance(hand[8], wrist);
         const knuckleDist = calculateDistance(hand[5], wrist); 
         if (knuckleDist === 0) return "0.00";
         return (tipDist / knuckleDist).toFixed(2);
     };
 
-    // Helper to check Hand Flatness
     const getHandFlatness = (hand) => {
         if (!hand) return "0.00";
         const wrist = hand[0];
@@ -169,21 +217,15 @@ export const getDebugStats = (pose, lHand, rHand) => {
     const rShoulder = pose[12]; const rElbow = pose[14]; const rWrist = pose[16];
 
     return {
-        // --- ARMS ---
         lArmAngle: calculateAngle(lShoulder, lElbow, lWrist).toFixed(0),
         rArmAngle: calculateAngle(rShoulder, rElbow, rWrist).toFixed(0),
-        
         lWristLevel: getLevel(lWrist, lShoulder),
         rWristLevel: getLevel(rWrist, rShoulder),
-
-        // --- HANDS ---
+        lHandState: getHandState(lHand),
+        rHandState: getHandState(rHand),
         lIndexRatio: getIndexStraightness(lHand),
         rIndexRatio: getIndexStraightness(rHand),
-
         lFlatRatio: getHandFlatness(lHand),
         rFlatRatio: getHandFlatness(rHand),
-
-        lThumbX: lHand ? (lHand[4].x - lHand[5].x).toFixed(3) : "N/A",
-        rThumbX: rHand ? (rHand[4].x - rHand[5].x).toFixed(3) : "N/A",
     };
 };

@@ -246,7 +246,7 @@ const App = () => {
       setDrillSuccess(false);
   };
 
-  return (
+return (
     <div className="min-h-screen bg-slate-900 flex flex-col items-center text-white font-sans p-4">
       <div className="w-full max-w-5xl flex justify-between items-center mb-4 z-10">
         <div className="flex gap-4">
@@ -263,25 +263,32 @@ const App = () => {
             </button>
         </div>
       </div>
+      <div className="flex flex-row justify-center gap-4 w-full px-4">
+          {/* VIDEO CONTAINER */}
+          <div className="relative w-full max-w-5xl aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex items-center justify-center">
+              {(!holisticLoaded) && (
+                 <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900 text-white">
+                   <div className="text-center">
+                      <div className="text-2xl font-bold mb-2 animate-pulse">Loading AI Models...</div>
+                      <div className="text-slate-400">Please allow camera access.</div>
+                   </div>
+                 </div>
+              )}
+              <video ref={webcamRef} className="hidden" playsInline muted autoPlay></video>
+              <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover transform -scale-x-100" />
+              
+              <HUD mode={mode} leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} />
+              <AssessmentDrill mode={mode} target={drillTarget} success={drillSuccess} onStart={startDrill} onNext={() => setDrillTarget(null)} />
+              <VoiceSubtitle text={voiceCommand} />
+          </div>
 
-      <div className="relative w-full max-w-5xl aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex items-center justify-center">
-          {(!holisticLoaded) && (
-             <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900 text-white">
-               <div className="text-center">
-                  <div className="text-2xl font-bold mb-2 animate-pulse">Loading AI Models...</div>
-                  <div className="text-slate-400">Please allow camera access.</div>
-               </div>
+          {showDebug && (
+             <div className="hidden lg:block h-full">
+                 <DebugPanel isVisible={showDebug} stats={debugStats} />
              </div>
           )}
-          <video ref={webcamRef} className="hidden" playsInline muted autoPlay></video>
-          <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover transform -scale-x-100" />
-          
-          <HUD mode={mode} leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} />
-          <DebugPanel isVisible={showDebug} stats={debugStats} />
-          <AssessmentDrill mode={mode} target={drillTarget} success={drillSuccess} onStart={startDrill} onNext={() => setDrillTarget(null)} />
-          <VoiceSubtitle text={voiceCommand} />
-      </div>
 
+      </div>
       {mode === 'training' && (
         <div className="mt-6 px-6 py-3 bg-slate-800 rounded-full border border-slate-700 text-slate-400 text-sm text-center">
             Try: <span className="text-yellow-400 font-bold">Extend Boom</span> (Thumbs OUT), <span className="text-yellow-400 font-bold">Swing Boom</span> (Blade Hand), or <span className="text-yellow-400 font-bold">Dog Everything</span>
