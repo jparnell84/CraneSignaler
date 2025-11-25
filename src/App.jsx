@@ -114,10 +114,10 @@ const App = () => {
   const canvasRef = useRef(null);
   const cameraRef = useRef(null);
 
-  const leftIndexHistory = useRef([]);
-  const rightIndexHistory = useRef([]);
   const leftWristHistory = useRef([]);
   const rightWristHistory = useRef([]);
+  const leftHandHistory = useRef([]);
+  const rightHandHistory = useRef([]);
 
   const toggleVoice = () => {
       setIsVoiceActive(!isVoiceActive);
@@ -125,12 +125,13 @@ const App = () => {
   };
 
   const updateGeneralHistory = (landmark, historyRef) => {
-    if (landmark) {
-        historyRef.current.push({ x: landmark.x, y: landmark.y });
-        if (historyRef.current.length > 30) historyRef.current.shift();
-    } else {
-        historyRef.current = [];
-    }
+      const data = landmark ? (Array.isArray(landmark) ? landmark : { x: landmark.x, y: landmark.y }) : null;
+      if (data) {
+          historyRef.current.push(data);
+          if (historyRef.current.length > 30) historyRef.current.shift();
+      } else {
+          historyRef.current = [];
+      }
   };
 
   const onResults = useCallback((results) => {
@@ -160,21 +161,25 @@ const App = () => {
 
     if (results.poseLandmarks) {
       const pose = results.poseLandmarks;
-      const lIndex = results.leftHandLandmarks ? results.leftHandLandmarks[8] : null;
-      const rIndex = results.rightHandLandmarks ? results.rightHandLandmarks[8] : null;
       
-      updateGeneralHistory(lIndex, leftIndexHistory);
-      updateGeneralHistory(rIndex, rightIndexHistory);
       updateGeneralHistory(pose[15], leftWristHistory);
       updateGeneralHistory(pose[16], rightWristHistory);
+      updateGeneralHistory(results.leftHandLandmarks, leftHandHistory);
+      updateGeneralHistory(results.rightHandLandmarks, rightHandHistory);
 
       // Angle calculation now imported from geometry.js
       setLeftAngle(calculateAngle(pose[11], pose[13], pose[15]));
       setRightAngle(calculateAngle(pose[12], pose[14], pose[16]));
 
+      const histories = {
+        lWristHist: leftWristHistory.current,
+        rWristHist: rightWristHistory.current,
+        lHandHist: leftHandHistory.current,
+        rHandHist: rightHandHistory.current
+      };
       // Debug Stats calculation imported from geometry.js
       if (showDebugRef.current) { 
-          const stats = getDebugStats(pose, results.leftHandLandmarks, results.rightHandLandmarks);
+          const stats = getDebugStats(pose, results.leftHandLandmarks, results.rightHandLandmarks, histories);
           setDebugStats(stats);
       }
 
@@ -182,14 +187,11 @@ const App = () => {
       
       // Signal Rules imported from signals.js
       for (const sig of Object.keys(SIGNAL_RULES)) {
-          if (SIGNAL_RULES[sig](
+          if (SIGNAL_RULES[sig]( // Pass histories as a single object
               pose, 
               results.leftHandLandmarks, 
               results.rightHandLandmarks,
-              leftIndexHistory.current,  
-              rightIndexHistory.current, 
-              leftWristHistory.current,  
-              rightWristHistory.current  
+              histories
           )) {
               activeSignal = sig;
               break;

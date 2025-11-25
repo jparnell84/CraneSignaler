@@ -1,6 +1,7 @@
 import { 
     calculateAngle, 
     detectThumb, 
+    detectRepetitiveClench,
     getPalmDirection,
     isIndexPointing,
     detectIndexFinger, 
@@ -12,8 +13,7 @@ import {
     areOtherFingersCurled,
     isArmHorizontal,
     isThumbNeutral,
-    areHandsLevel,
-    isThumbActive
+    areHandsLevel
 } from './geometry';
 
 export const SIGNAL_RULES = {
@@ -81,7 +81,7 @@ export const SIGNAL_RULES = {
          return lDir === 'IN' && rDir === 'IN' && symmetric;
     },
 
-    'EMERGENCY STOP': (pose, lHand, rHand, lIdxHist, rIdxHist, lWristHist, rWristHist) => {
+    'EMERGENCY STOP': (pose, lHand, rHand, { lWristHist, rWristHist }) => {
         if (!pose) return false;
         
         const rStatic = isArmHorizontal(pose[12], pose[14], pose[16]);
@@ -200,6 +200,34 @@ export const SIGNAL_RULES = {
         };
         return checkSide(rHand, pose[12], pose[14], pose[16]) || 
                checkSide(lHand, pose[11], pose[13], pose[15]);
+    },
+
+    'RAISE BOOM & LOWER LOAD': (pose, lHand, rHand, { lHandHist, rHandHist }) => {
+        if (!pose) return false;
+        const checkSide = (hand, handHist) => {
+            if (!hand) return false;
+            // 1. Base pose is "Thumb Up".
+            if (detectThumb(hand) !== 'UP') return false;
+            // 2. Must NOT be a pointing gesture (to avoid conflict with HOIST).
+            if (isIndexPointing(hand)) return false;
+            // 3. Must have repetitive clenching motion.
+            return detectRepetitiveClench(handHist);
+        };
+        return checkSide(rHand, rHandHist) || checkSide(lHand, lHandHist);
+    },
+
+    'LOWER BOOM & HOIST LOAD': (pose, lHand, rHand, { lHandHist, rHandHist }) => {
+        if (!pose) return false;
+        const checkSide = (hand, handHist) => {
+            if (!hand) return false;
+            // 1. Base pose is "Thumb Down".
+            if (detectThumb(hand) !== 'DOWN') return false;
+            // 2. Must NOT be a pointing gesture (to avoid conflict with SWING).
+            if (isIndexPointing(hand)) return false;
+            // 3. Must have repetitive clenching motion.
+            return detectRepetitiveClench(handHist);
+        };
+        return checkSide(rHand, rHandHist) || checkSide(lHand, lHandHist);
     },
 
     'SWING BOOM': (pose, lHand, rHand) => {

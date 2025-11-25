@@ -11,6 +11,11 @@ const DebugPanel = ({ stats, isVisible }) => {
      return isGood ? "text-green-400 font-bold" : "text-yellow-500";
   };
 
+  const colorBool = (val) => {
+    if (val === "TRUE") return "text-green-400 font-bold";
+    return "text-slate-500";
+  };
+
   return (
     <div className="p-4 rounded-xl bg-slate-950/90 backdrop-blur border border-slate-700 w-72 font-mono text-xs text-slate-300 shadow-2xl h-fit">
       <h3 className="text-white font-bold border-b border-slate-700 pb-2 mb-3 tracking-wider">TELEMETRY DATA</h3>
@@ -27,6 +32,20 @@ const DebugPanel = ({ stats, isVisible }) => {
 
               <span title="Right hand to head">R Hand-Head:</span>
               <span className={colorVal(stats.rHandToHead, 0.25, 'lt')}>{stats.rHandToHead}</span>
+          </div>
+      </div>
+      <div className="border-t border-slate-700 my-2"></div>
+
+      {/* MOTION SECTION */}
+      <div>
+          <div className="text-cyan-400 font-bold mb-1 border-b border-slate-800">MOTION</div>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+              <span title="Repetitive clenching of left hand">L Clench:</span>
+              <span className={colorBool(stats.lClenchStatus)}>{stats.lClenchStatus}</span>
+              <span title="Repetitive clenching of right hand">R Clench:</span>
+              <span className={colorBool(stats.rClenchStatus)}>{stats.rClenchStatus}</span>
+              <span title="Horizontal waving motion of either wrist">Wave:</span>
+              <span className={colorBool(stats.waveStatus)}>{stats.waveStatus}</span>
           </div>
       </div>
       <div className="border-t border-slate-700 my-2"></div>

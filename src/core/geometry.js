@@ -219,6 +219,36 @@ export const detectRepetitiveMotion = (history) => {
     return ratio > 1.2; 
 };
 
+// NEW: Detects repetitive opening and closing of the hand (clench/unclench).
+// This is for signals like "Raise Boom & Lower Load".
+export const detectRepetitiveClench = (handHistory) => {
+    // Need at least ~1 second of data (at ~15fps) to detect a cycle.
+    if (!handHistory || handHistory.length < 15) return false;
+
+    // We'll check the state (open/closed) at different points in the history.
+    const historyLength = handHistory.length;
+    const recentHand = handHistory[historyLength - 1]; // Most recent frame
+    const midHand = handHistory[Math.floor(historyLength / 2)]; // Frame from the middle of the history
+    const oldestHand = handHistory[0]; // Oldest frame in the history
+
+    if (!recentHand || !midHand || !oldestHand) return false;
+
+    // Check the open/closed state for each point in time.
+    // A fist is defined as all non-thumb fingers being curled.
+    const isRecentFist = areOtherFingersCurled(recentHand) && isFingerCurled(recentHand, 8, 6);
+    const isMidFist = areOtherFingersCurled(midHand) && isFingerCurled(midHand, 8, 6);
+    const isOldestFist = areOtherFingersCurled(oldestHand) && isFingerCurled(oldestHand, 8, 6);
+
+    // A valid clench cycle is when the state changes, e.g., Open -> Closed -> Open.
+    // We check for two state changes in the history (e.g., oldest != mid and mid != recent).
+    // This indicates an oscillation between states.
+    const stateChangedOnce = isOldestFist !== isMidFist;
+    const stateChangedTwice = isMidFist !== isRecentFist;
+
+    // To qualify as a repetitive motion, there must be at least two changes in state.
+    return stateChangedOnce && stateChangedTwice;
+};
+
 export const detectHorizontalWave = (history) => {
     if (history.length < 5) return false;
     let minX = 1, maxX = 0, minY = 1, maxY = 0;
@@ -269,7 +299,7 @@ const getHandFlatnessRatio = (hand) => {
     return width / height;
 };
 
-export const getDebugStats = (pose, lHand, rHand) => {
+export const getDebugStats = (pose, lHand, rHand, histories = {}) => {
     if (!pose) return null;
     const getLevel = (wrist, shoulder) => (wrist.y - shoulder.y).toFixed(2);
 
@@ -278,6 +308,13 @@ export const getDebugStats = (pose, lHand, rHand) => {
 
     // For MAIN HOIST signal
     const nose = pose[0];
+
+    const { lWristHist, rWristHist, lHandHist, rHandHist } = histories;
+
+    const toBoolStr = (val) => val ? "TRUE" : "FALSE";
+    const lClench = toBoolStr(detectRepetitiveClench(lHandHist));
+    const rClench = toBoolStr(detectRepetitiveClench(rHandHist));
+    const wave = toBoolStr(detectHorizontalWave(lWristHist) || detectHorizontalWave(rWristHist));
 
     return {
         // ARMS
@@ -302,5 +339,10 @@ export const getDebugStats = (pose, lHand, rHand) => {
         lThumbY: lHand ? (lHand[5].y - lHand[4].y).toFixed(2) : "0.00", // indexMCP.y - thumbTip.y
         rThumbX: rHand ? (rHand[4].x - rHand[5].x).toFixed(2) : "0.00",
         rThumbY: rHand ? (rHand[5].y - rHand[4].y).toFixed(2) : "0.00",
+
+        // MOTION
+        lClenchStatus: lClench,
+        rClenchStatus: rClench,
+        waveStatus: wave,
     };
 };
