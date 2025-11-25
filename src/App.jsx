@@ -73,8 +73,6 @@ const AssessmentDrill = ({ mode, target, success, onStart, onNext }) => {
   );
 };
 
-<VoiceRadio isActive={isVoiceActive} />
-
 // --- 3. MAIN APP COMPONENT ---
 
 const App = () => {
@@ -86,7 +84,6 @@ const App = () => {
   const [drillSuccess, setDrillSuccess] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [debugStats, setDebugStats] = useState(null);
-  const [voiceCommand, setVoiceCommand] = useState('');
   const [isVoiceActive, setIsVoiceActive] = useState(false);
 
   const showDebugRef = useRef(showDebug);
@@ -105,7 +102,6 @@ const App = () => {
 
   const toggleVoice = () => {
       setIsVoiceActive(!isVoiceActive);
-      if (!isVoiceActive) setVoiceCommand("Voice Mode: Mock Enabled");
   };
 
   const updateGeneralHistory = (landmark, historyRef) => {
@@ -266,7 +262,7 @@ const App = () => {
               
               <HUD mode={mode} leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} />
               <AssessmentDrill mode={mode} target={drillTarget} success={drillSuccess} onStart={startDrill} onNext={() => setDrillTarget(null)} />
-              <VoiceSubtitle text={voiceCommand} />
+              <VoiceRadio isActive={isVoiceActive} />
           </div>
 
           {showDebug && (
