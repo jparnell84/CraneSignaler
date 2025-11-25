@@ -1,8 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import DebugPanel from './components/DebugPanel';
-import { getDebugStats, calculateAngle } from './core/geometry';
 import { SIGNAL_RULES } from './core/signals';
-import VoiceRadio from './components/VoiceRadio';
 
 // --- 1. UTILITY: Script Loader for MediaPipe ---
 const useMediaPipeScript = (url) => {
@@ -19,59 +17,12 @@ const useMediaPipeScript = (url) => {
   return loaded;
 };
 
-// --- 2. UI COMPONENTS ---
-
-const HUD = ({ mode, leftAngle, rightAngle, signal }) => {
-  if (mode !== 'training') return null;
-  return (
-    <div className="absolute top-4 left-4 p-4 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-600 shadow-xl w-72 z-40">
-      <h1 className="text-xl font-bold text-yellow-400 mb-1">Signal Evaluator</h1>
-      <p className="text-slate-300 text-xs mb-4">Mode: <span className="font-mono text-white">Training</span></p>
-      <div className="space-y-2">
-        <div className="flex justify-between text-sm">
-          <span className="text-slate-400">Left Arm:</span>
-          <span className="font-mono font-bold text-white">{Math.round(leftAngle)}°</span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-slate-400">Right Arm:</span>
-          <span className="font-mono font-bold text-white">{Math.round(rightAngle)}°</span>
-        </div>
-        <div className="mt-3 pt-3 border-t border-slate-600">
-          <p className="text-xs text-slate-500 uppercase tracking-wider">Current Signal</p>
-          <div className={`mt-1 text-2xl font-bold ${signal === 'NONE' || signal === 'WAITING...' ? 'text-white' : 'text-green-400'}`}>
-            {signal}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const AssessmentDrill = ({ mode, target, success, onStart, onNext }) => {
-  if (mode !== 'assessment') return null;
-  return (
-    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-40">
-       <div className="max-w-md w-full p-8 rounded-2xl bg-slate-900/95 backdrop-blur text-center pointer-events-auto mx-4 border border-white/10">
-          <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Drill Command</h2>
-          {!target ? (
-             <button onClick={onStart} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-xl w-full">Start Random Drill</button>
-          ) : (
-              <div>
-                <div className="text-4xl font-black text-white mb-6">{target}</div>
-                {success ? (
-                  <div className="text-green-500 font-bold text-xl animate-bounce">SUCCESS!</div>
-                ) : (
-                  <div className="text-yellow-500 font-mono animate-pulse">PERFORM SIGNAL...</div>
-                )}
-                {success && (
-                  <button onClick={onNext} className="mt-6 text-sm text-blue-400 underline hover:text-blue-300">Next Drill</button>
-                )}
-             </div>
-          )}
-       </div>
-    </div>
-  );
-};
+// --- 2. CORE & UI IMPORTS ---
+import { getDebugStats, calculateAngle } from './core/geometry';
+import HUD from './components/HUD';
+import VoiceDrill from './components/VoiceDrill';
+import AssessmentDrill from './components/AssessmentDrill';
+import useSpeechRecognition from './hooks/useSpeechRecognition';
 
 // --- 3. MAIN APP COMPONENT ---
 
@@ -85,6 +36,8 @@ const App = () => {
   const [showDebug, setShowDebug] = useState(false);
   const [debugStats, setDebugStats] = useState(null);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
+  const { text: spokenText } = useSpeechRecognition(isVoiceActive);
+  const [activeVoiceCommand, setActiveVoiceCommand] = useState('NONE');
 
   const showDebugRef = useRef(showDebug);
   useEffect(() => {
@@ -102,6 +55,11 @@ const App = () => {
 
   const toggleVoice = () => {
       setIsVoiceActive(!isVoiceActive);
+      // Stop/start the camera to save resources and hide the feed.
+      if (cameraRef.current) {
+        if (!isVoiceActive) cameraRef.current.stop();
+        else cameraRef.current.start();
+      }
   };
 
   const updateGeneralHistory = (landmark, historyRef) => {
@@ -165,17 +123,20 @@ const App = () => {
 
       let activeSignal = "NONE";
       
-      // Signal Rules imported from signals.js
-      for (const sig of Object.keys(SIGNAL_RULES)) {
-          if (SIGNAL_RULES[sig]( // Pass histories as a single object
-              pose, 
-              results.leftHandLandmarks, 
-              results.rightHandLandmarks,
-              histories
-          )) {
-              activeSignal = sig;
-              break;
-          }
+      // Only process hand signals if voice mode is NOT active.
+      if (!isVoiceActive) {
+        // Signal Rules imported from signals.js
+        for (const sig of Object.keys(SIGNAL_RULES)) {
+            if (SIGNAL_RULES[sig]( // Pass histories as a single object
+                pose, 
+                results.leftHandLandmarks, 
+                results.rightHandLandmarks,
+                histories
+            )) {
+                activeSignal = sig;
+                break;
+            }
+        }
       }
       setDetectedSignal(activeSignal);
 
@@ -184,12 +145,27 @@ const App = () => {
       }
     }
     canvasCtx.restore();
-  }, [mode, drillTarget]);
+  }, [mode, drillTarget, isVoiceActive]);
 
   // Load scripts
   const holisticLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js");
   const cameraUtilsLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
   const drawingUtilsLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js");
+
+  useEffect(() => {
+    if (!isVoiceActive) {
+      setActiveVoiceCommand('NONE');
+      return;
+    }
+    // Find the first matching signal in the spoken text
+    const command = Object.keys(SIGNAL_RULES).find(sig => 
+      spokenText.toLowerCase().includes(sig.toLowerCase())
+    );
+
+    if (command) {
+      setActiveVoiceCommand(command);
+    }
+  }, [spokenText, isVoiceActive]);
 
   useEffect(() => {
     if (holisticLoaded && cameraUtilsLoaded && drawingUtilsLoaded && webcamRef.current) {
@@ -257,12 +233,12 @@ const App = () => {
                    </div>
                  </div>
               )}
-              <video ref={webcamRef} className="hidden" playsInline muted autoPlay></video>
-              <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover transform -scale-x-100" />
+              <video ref={webcamRef} className={`hidden ${isVoiceActive ? 'invisible' : ''}`} playsInline muted autoPlay></video>
+              <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover transform -scale-x-100 ${isVoiceActive ? 'invisible' : ''}`} />
               
-              <HUD mode={mode} leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} />
+              {isVoiceActive && <VoiceDrill activeCommand={activeVoiceCommand} />}
+              <HUD mode={mode} leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />
               <AssessmentDrill mode={mode} target={drillTarget} success={drillSuccess} onStart={startDrill} onNext={() => setDrillTarget(null)} />
-              <VoiceRadio isActive={isVoiceActive} />
           </div>
 
           {showDebug && (
