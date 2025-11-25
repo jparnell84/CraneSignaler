@@ -1,43 +1,65 @@
+/* 1. Import the Inter font from Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root {
+/* 2. Apply the font and background globally */
+body {
+  margin: 0;
+  /* Force the font family */
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  /* Deep blue/slate gradient background */
+  background: linear-gradient(180deg, #0f172a 0%, #020617 100%);
+  color: #e6eef8;
+  /* Smoother font rendering on Mac/Windows */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  height: 100vh;
+}
+
+#root {
   height: 100%;
 }
 
-body {
-  margin: 0;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-}
-
-/* Custom UI utilities from original single-file UI */
+/* 3. Custom Utilities used in components */
 .glass-panel {
   background: rgba(15, 23, 42, 0.9);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.08);
-}
-.tab-active {
-  background-color: #3b82f6;
-  color: white;
-}
-.tab-inactive {
-  background-color: rgba(255,255,255,0.04);
-  color: #94a3b8;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Mirror video/canvas for camera preview */
-canvas {
-  transform: scaleX(-1);
+/* Focus rings for accessibility */
+button:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
 }
-/* Keep the video element available to MediaPipe (avoid display:none) while visually hiding it */
+
+/* 4. Video Hiding Hack (Vital for MediaPipe) */
 video {
   position: absolute;
   left: -9999px;
+  top: 0;
   width: 1px;
   height: 1px;
-  transform: scaleX(-1);
   opacity: 0;
   pointer-events: none;
+  display: block !important; 
 }
 
+canvas {
+  transform: scaleX(-1); /* Mirror the camera */
+}
+
+/* 5. Animations for Assessment Mode */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes zoomIn { from { transform: scale(0.95); } to { transform: scale(1); } }
+
+.animate-in {
+  animation-duration: 300ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  animation-fill-mode: both;
+}
+.fade-in { animation-name: fadeIn; }
+.zoom-in { animation-name: zoomIn; }
