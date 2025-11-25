@@ -1,44 +1,30 @@
 import React from 'react';
 
 const HUD = ({ mode, leftAngle, rightAngle, signal, isVoiceActive, voiceCommand }) => {
-
   return (
-    <div className="absolute top-4 left-4 p-4 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-600 shadow-xl w-72 z-40">
+    <div className="flex items-center justify-center gap-6 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 h-full">
       {isVoiceActive ? (
-        // --- VOICE MODE DISPLAY ---
-        <div>
-          <h1 className="text-xl font-bold text-red-400 mb-1">Voice Radio</h1>
-          <p className="text-slate-300 text-xs mb-4">Input: <span className="font-mono text-white">Microphone</span></p>
-          <div className="mt-3 pt-3 border-t border-slate-600 text-center">
-             <div className="flex items-center justify-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                <div className="text-xl font-bold text-white">VOICE MODE</div>
-             </div>
-             <p className="text-xs text-slate-500 uppercase tracking-wider mt-4">Active Command</p>
-             <div className="mt-1 text-2xl font-bold text-green-400 h-8">{voiceCommand !== 'NONE' ? voiceCommand : '...'}</div>
+        // --- VOICE MODE (HORIZONTAL) ---
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="font-bold text-red-400">VOICE MODE</span>
+          </div>
+          <div className="w-px h-6 bg-slate-600" />
+          <div className="flex items-baseline gap-2">
+            <span className="text-xs text-slate-400">COMMAND:</span>
+            <span className="font-mono font-bold text-lg text-green-400">{voiceCommand !== 'NONE' ? voiceCommand : '...'}</span>
           </div>
         </div>
       ) : (
-        // --- HAND SIGNAL DISPLAY (Only in Training Mode) ---
+        // --- HAND SIGNAL (HORIZONTAL) ---
         mode === 'training' && (
-          <div>
-            <h1 className="text-xl font-bold text-yellow-400 mb-1">Signal Evaluator</h1>
-            <p className="text-slate-300 text-xs mb-4">Mode: <span className="font-mono text-white">Training</span></p>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Left Arm:</span>
-                <span className="font-mono font-bold text-white">{Math.round(leftAngle)}°</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Right Arm:</span>
-                <span className="font-mono font-bold text-white">{Math.round(rightAngle)}°</span>
-              </div>
-              <div className="mt-3 pt-3 border-t border-slate-600">
-                <p className="text-xs text-slate-500 uppercase tracking-wider">Current Signal</p>
-                <div className={`mt-1 text-2xl font-bold ${signal === 'NONE' || signal === 'WAITING...' ? 'text-white' : 'text-green-400'}`}>
-                  {signal}
-                </div>
-              </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs text-slate-400">SIGNAL:</span>
+              <span className={`font-mono font-bold text-lg ${signal === 'NONE' || signal === 'WAITING...' ? 'text-white' : 'text-green-400'}`}>
+                {signal}
+              </span>
             </div>
           </div>
         )
