@@ -299,7 +299,7 @@ const getHandFlatnessRatio = (hand) => {
     return width / height;
 };
 
-export const getDebugStats = (pose, lHand, rHand, histories = {}) => {
+export const getDebugStats = (pose, lHand, rHand, histories = {}, spokenText = '') => {
     if (!pose) return null;
     const getLevel = (wrist, shoulder) => (wrist.y - shoulder.y).toFixed(2);
 
@@ -344,5 +344,8 @@ export const getDebugStats = (pose, lHand, rHand, histories = {}) => {
         lClenchStatus: lClench,
         rClenchStatus: rClench,
         waveStatus: wave,
+
+        // VOICE
+        spokenText: spokenText || '...',
     };
 };

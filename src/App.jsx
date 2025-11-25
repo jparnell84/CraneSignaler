@@ -117,7 +117,7 @@ const App = () => {
       };
       // Debug Stats calculation imported from geometry.js
       if (showDebugRef.current) { 
-          const stats = getDebugStats(pose, results.leftHandLandmarks, results.rightHandLandmarks, histories);
+          const stats = getDebugStats(pose, results.leftHandLandmarks, results.rightHandLandmarks, histories, spokenText);
           setDebugStats(stats);
       }
 
@@ -145,7 +145,7 @@ const App = () => {
       }
     }
     canvasCtx.restore();
-  }, [mode, drillTarget, isVoiceActive]);
+  }, [mode, drillTarget, isVoiceActive, spokenText]);
 
   // Load scripts
   const holisticLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js");
