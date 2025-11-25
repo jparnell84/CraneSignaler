@@ -24,6 +24,20 @@ import VoiceDrill from './components/VoiceDrill';
 import AssessmentDrill from './components/AssessmentDrill';
 import useSpeechRecognition from './hooks/useSpeechRecognition';
 
+// --- 4. VOICE COMMAND MAPPING & PARSING ---
+const VOICE_COMMAND_SYNONYMS = {
+    'HOIST LOAD': ['hoist up', 'raise load'],
+    'LOWER LOAD': ['lower down'],
+    'SWING BOOM': ['swing'],
+    'TROLLEY TRAVEL': ['trolley'],
+    'BRIDGE TRAVEL': ['bridge'],
+    'STOP': ['stop'],
+    'EMERGENCY STOP': ['emergency'],
+    'DOG EVERYTHING': ['dog everything'],
+};
+
+const DIRECTIONAL_WORDS = ['left', 'right'];
+
 // --- 3. MAIN APP COMPONENT ---
 
 const App = () => {
@@ -117,7 +131,7 @@ const App = () => {
       };
       // Debug Stats calculation imported from geometry.js
       if (showDebugRef.current) { 
-          const stats = getDebugStats(pose, results.leftHandLandmarks, results.rightHandLandmarks, histories, spokenText);
+          const stats = getDebugStats(pose, results.leftHandLandmarks, results.rightHandLandmarks, histories, spokenText, activeVoiceCommand);
           setDebugStats(stats);
       }
 
@@ -157,14 +171,27 @@ const App = () => {
       setActiveVoiceCommand('NONE');
       return;
     }
-    // Find the first matching signal in the spoken text
-    const command = Object.keys(SIGNAL_RULES).find(sig => 
-      spokenText.toLowerCase().includes(sig.toLowerCase())
-    );
 
-    if (command) {
-      setActiveVoiceCommand(command);
+    const text = spokenText.toLowerCase();
+    let foundCommand = 'NONE';
+
+    // More robust parsing logic
+    for (const baseCommand in VOICE_COMMAND_SYNONYMS) {
+        const keywords = [baseCommand.toLowerCase(), ...VOICE_COMMAND_SYNONYMS[baseCommand]];
+        if (keywords.some(kw => text.includes(kw))) {
+            foundCommand = baseCommand;
+
+            // Check for directional words if it's a directional command
+            if (baseCommand === 'SWING BOOM' || baseCommand === 'BRIDGE TRAVEL' || baseCommand === 'TROLLEY TRAVEL') {
+                const direction = DIRECTIONAL_WORDS.find(dir => text.includes(dir));
+                if (direction) {
+                    foundCommand = `${baseCommand} ${direction.toUpperCase()}`;
+                }
+            }
+            break; // Stop after finding the first match
+        }
     }
+    setActiveVoiceCommand(foundCommand);
   }, [spokenText, isVoiceActive]);
 
   useEffect(() => {
@@ -223,15 +250,15 @@ const App = () => {
       </div>
 
       {/* SIDE-BY-SIDE LAYOUT */}
-      <div className="flex flex-row justify-center gap-4 w-full px-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 w-full px-4">
           <div className="relative w-full max-w-5xl aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex items-center justify-center">
               {(!holisticLoaded) && (
                  <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900 text-white">
                    <div className="text-center">
                       <div className="text-2xl font-bold mb-2 animate-pulse">Loading AI Models...</div>
                       <div className="text-slate-400">Please allow camera access.</div>
-                   </div>
-                 </div>
+                    </div>
+                  </div>
               )}
               <video ref={webcamRef} className={`hidden ${isVoiceActive ? 'invisible' : ''}`} playsInline muted autoPlay></video>
               <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover transform -scale-x-100 ${isVoiceActive ? 'invisible' : ''}`} />
@@ -241,11 +268,11 @@ const App = () => {
               <AssessmentDrill mode={mode} target={drillTarget} success={drillSuccess} onStart={startDrill} onNext={() => setDrillTarget(null)} />
           </div>
 
-          {showDebug && (
-             <div className="hidden lg:block h-full">
-                 <DebugPanel isVisible={showDebug} stats={debugStats} />
-             </div>
-          )}
+          {/* Sidebar for HUD and Debug */}
+          <div className="hidden lg:flex flex-col gap-4 w-72">
+              <HUD mode={mode} leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />
+              {showDebug && <DebugPanel isVisible={showDebug} stats={debugStats} />}
+          </div>
       </div>
 
       {mode === 'training' && (

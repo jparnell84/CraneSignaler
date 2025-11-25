@@ -56,6 +56,8 @@ const DebugPanel = ({ stats, isVisible }) => {
           <div className="grid grid-cols-3 gap-x-2 gap-y-1">
               <span className="col-span-1">Spoken:</span>
               <span className="col-span-2 text-white font-sans">{stats.spokenText}</span>
+              <span className="col-span-1">Command:</span>
+              <span className="col-span-2 text-green-400 font-bold">{stats.voiceCommand}</span>
           </div>
       </div>
       <div className="border-t border-slate-700 my-2"></div>
