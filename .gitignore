@@ -18,6 +18,10 @@ pnpm-debug.log*
 .env.*
 .env.local
 
+## Config
+# Contains sensitive API keys
+/src/firebase.js
+
 ## Logs
 logs/
 *.log
