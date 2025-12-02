@@ -1,5 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import DebugPanel from './components/DebugPanel';
+import { db, auth } from './firebase';
+import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
 import { SIGNAL_RULES } from './core/signals';
 
 // --- 1. UTILITY: Script Loader for MediaPipe ---
@@ -24,6 +26,7 @@ import VoiceDrill from './components/VoiceDrill';
 import AssessmentDrill from './components/AssessmentDrill';
 import ResultsScreen from './components/ResultsScreen';
 import useSpeechRecognition from './hooks/useSpeechRecognition';
+import { doc, getDoc } from 'firebase/firestore';
 
 // --- 4. ASSESSMENT CONFIGURATION ---
 const QUESTION_BANK = [
@@ -51,13 +54,14 @@ const App = () => {
   const [detectedSignal, setDetectedSignal] = useState('WAITING...');
   const [leftAngle, setLeftAngle] = useState(0);
   const [rightAngle, setRightAngle] = useState(0);
-  const [showDebug, setShowDebug] = useState(false);
   const [debugStats, setDebugStats] = useState(null);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const { text: spokenText } = useSpeechRecognition(isVoiceActive);
   const [activeVoiceCommand, setActiveVoiceCommand] = useState('NONE');
   const [assessmentQuestions, setAssessmentQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [results, setResults] = useState([]); // [{ question, correct, time }]
 
   const showDebugRef = useRef(showDebug);
@@ -137,7 +141,7 @@ const App = () => {
         rHandHist: rightHandHistory.current
       };
       // Debug Stats calculation imported from geometry.js
-      if (showDebugRef.current) { 
+      if (isAdmin) { 
           const stats = getDebugStats(pose, results.leftHandLandmarks, results.rightHandLandmarks, histories, spokenText);
           setDebugStats(stats);
       }
@@ -163,7 +167,7 @@ const App = () => {
 
     }
     canvasCtx.restore();
-  }, [isVoiceActive, spokenText]);
+  }, [isVoiceActive, spokenText, isAdmin]);
 
   // --- SCRIPT & MODEL LOADING ---
   const holisticLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js");
@@ -215,6 +219,41 @@ const App = () => {
     }
   }, [holisticLoaded, cameraUtilsLoaded, drawingUtilsLoaded, onResults]);
 
+  // --- AUTH & ADMIN LOGIC ---
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        // Check for admin role in Firestore
+        const userDocRef = doc(db, 'users', currentUser.uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists() && userDoc.data().role === 'admin') {
+          setIsAdmin(true);
+        } else {
+          setIsAdmin(false);
+        }
+      } else {
+        setUser(null);
+        setIsAdmin(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleAdminLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Admin login failed:", error);
+    }
+  };
+
+  const handleLogout = () => {
+    signOut(auth);
+  };
+
+
   // --- ASSESSMENT FLOW LOGIC ---
   const startAssessment = () => {
       const shuffledQuestions = shuffleArray(QUESTION_BANK).slice(0, 10);
@@ -242,6 +281,20 @@ const App = () => {
     setCurrentQuestionIndex(0);
     setResults([]);
   }
+
+  const simulateLms = () => {
+    const fakeUrl = `${window.location.pathname}?user_id=sim_user_123&session_id=sim_session_abc`;
+    window.history.pushState({}, 'Simulated LMS', fakeUrl);
+    alert(`Simulating LMS launch. URL is now:\n${window.location.href}`);
+  };
+
+  const forcePass = () => {
+    // Create a dummy result set that passes
+    const passingResults = assessmentQuestions.map(q => ({ question: q, correct: true }));
+    setResults(passingResults);
+    setAppState('RESULTS');
+  };
+
 
   // Effect to transition from INITIALIZING to WELCOME
   useEffect(() => {
@@ -281,15 +334,13 @@ const App = () => {
     <div className="min-h-screen bg-slate-900 flex flex-col items-center text-white font-sans p-4">
       <div className="w-full max-w-5xl flex justify-between items-center mb-4 z-10">
         <h1 className="text-2xl font-bold text-slate-300">Crane Signal Assessment</h1>
-        <div className="flex gap-2">
-            <button onClick={() => setShowDebug(!showDebug)} className={`px-3 py-2 rounded-lg border text-xs font-mono transition-colors ${showDebug ? 'bg-green-900/50 border-green-500 text-green-400' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
-                {showDebug ? 'DEBUG ON' : 'DEBUG OFF'}
-            </button>
+        <div className="flex items-center gap-2">
             {/* The mic button is now more of an indicator, controlled by the assessment state */}
             <div className={`flex items-center gap-2 px-4 py-2 rounded-lg border ${isVoiceActive ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
                 <div className={`w-2 h-2 rounded-full ${isVoiceActive ? 'bg-red-500 animate-pulse' : 'bg-slate-500'}`} />
                 <span className="text-sm font-mono">Mic</span>
             </div>
+            {isAdmin && <span className="px-3 py-1 rounded-full bg-green-900/50 border border-green-500 text-green-400 text-xs font-mono">ADMIN</span>}
         </div>
       </div>
 
@@ -311,6 +362,13 @@ const App = () => {
                       <button onClick={startAssessment} className="px-8 py-3 rounded-lg font-bold transition-colors bg-blue-600 hover:bg-blue-500 text-white text-lg">
                           Begin Assessment
                       </button>
+                      {isAdmin && (
+                        <div className="mt-8 flex justify-center gap-4">
+                            <button onClick={simulateLms} className="px-4 py-2 text-xs rounded-lg bg-yellow-600/20 border border-yellow-500 text-yellow-400">
+                                Simulate LMS
+                            </button>
+                        </div>
+                      )}
                   </div>
               )}
 
@@ -321,16 +379,29 @@ const App = () => {
               
               {appState === 'ASSESSMENT_ACTIVE' && <HUD mode="assessment" leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />}
               {appState === 'ASSESSMENT_ACTIVE' && <AssessmentDrill mode="assessment" target={currentQuestion?.prompt} success={false} />}
+              {appState === 'ASSESSMENT_ACTIVE' && isAdmin && (
+                <button onClick={forcePass} className="absolute bottom-4 right-4 px-4 py-2 text-xs rounded-lg bg-purple-600/50 border border-purple-400 text-purple-300 z-30">
+                    Force Pass
+                </button>
+              )}
 
               {appState === 'RESULTS' && <ResultsScreen results={results} onRestart={restartAssessment} />}
           </div>
 
-          {showDebug && (
+          {isAdmin && (
              <div className="hidden lg:block h-full">
-                 <DebugPanel isVisible={showDebug} stats={debugStats} />
+                 <DebugPanel isVisible={isAdmin} stats={debugStats} />
              </div>
           )}
       </div>
+
+      <footer className="w-full max-w-5xl mt-4 text-center text-slate-500 text-xs">
+        {user ? (
+            <span>Welcome, {user.displayName}. <button onClick={handleLogout} className="underline hover:text-slate-300">Logout</button></span>
+        ) : (
+            <button onClick={handleAdminLogin} className="underline hover:text-slate-300">Admin Login</button>
+        )}
+      </footer>
 
     </div>
   );
