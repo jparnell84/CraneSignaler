@@ -22,22 +22,43 @@ import { getDebugStats, calculateAngle } from './core/geometry';
 import HUD from './components/HUD';
 import VoiceDrill from './components/VoiceDrill';
 import AssessmentDrill from './components/AssessmentDrill';
+import ResultsScreen from './components/ResultsScreen';
 import useSpeechRecognition from './hooks/useSpeechRecognition';
+
+// --- 4. ASSESSMENT CONFIGURATION ---
+const QUESTION_BANK = [
+    ...Object.keys(SIGNAL_RULES).map(sig => ({ type: 'HAND', id: sig, prompt: `Perform: ${sig}` })),
+    // Add voice command questions here. Using placeholders for now.
+    { type: 'VOICE', id: 'SWING BOOM', prompt: 'The load is drifting to the side. Correct it.' },
+    { type: 'VOICE', id: 'STOP', prompt: 'An obstacle is in the path. Halt the operation.' },
+    { type: 'VOICE', id: 'DOG EVERYTHING', prompt: 'A non-essential person entered the work area. Pause all movement.' }
+];
+
+const shuffleArray = (array) => {
+    const newArray = [...array];
+    for (let i = newArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+    }
+    return newArray;
+};
 
 // --- 3. MAIN APP COMPONENT ---
 
 const App = () => {
-  const [mode, setMode] = useState('training');
+  // Refactored state management for application flow
+  const [appState, setAppState] = useState('INITIALIZING'); // INITIALIZING, WELCOME, ASSESSMENT_ACTIVE, RESULTS, SUBMITTING, COMPLETE
   const [detectedSignal, setDetectedSignal] = useState('WAITING...');
   const [leftAngle, setLeftAngle] = useState(0);
   const [rightAngle, setRightAngle] = useState(0);
-  const [drillTarget, setDrillTarget] = useState(null);
-  const [drillSuccess, setDrillSuccess] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [debugStats, setDebugStats] = useState(null);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const { text: spokenText } = useSpeechRecognition(isVoiceActive);
   const [activeVoiceCommand, setActiveVoiceCommand] = useState('NONE');
+  const [assessmentQuestions, setAssessmentQuestions] = useState([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [results, setResults] = useState([]); // [{ question, correct, time }]
 
   const showDebugRef = useRef(showDebug);
   useEffect(() => {
@@ -140,14 +161,11 @@ const App = () => {
       }
       setDetectedSignal(activeSignal);
 
-      if (mode === 'assessment' && activeSignal === drillTarget) {
-        setDrillSuccess(true);
-      }
     }
     canvasCtx.restore();
-  }, [mode, drillTarget, isVoiceActive, spokenText]);
+  }, [isVoiceActive, spokenText]);
 
-  // Load scripts
+  // --- SCRIPT & MODEL LOADING ---
   const holisticLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js");
   const cameraUtilsLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
   const drawingUtilsLoaded = useMediaPipeScript("https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js");
@@ -197,35 +215,88 @@ const App = () => {
     }
   }, [holisticLoaded, cameraUtilsLoaded, drawingUtilsLoaded, onResults]);
 
-  const startDrill = () => {
-      const keys = Object.keys(SIGNAL_RULES);
-      const randomSig = keys[Math.floor(Math.random() * keys.length)];
-      setDrillTarget(randomSig);
-      setDrillSuccess(false);
+  // --- ASSESSMENT FLOW LOGIC ---
+  const startAssessment = () => {
+      const shuffledQuestions = shuffleArray(QUESTION_BANK).slice(0, 10);
+      setAssessmentQuestions(shuffledQuestions);
+      setCurrentQuestionIndex(0);
+      setResults([]);
+      setAppState('ASSESSMENT_ACTIVE');
   };
+
+  const handleCorrectAnswer = () => {
+    // In a real scenario, you'd log the result with timing, etc.
+    setResults(prev => [...prev, { question: assessmentQuestions[currentQuestionIndex], correct: true }]);
+
+    if (currentQuestionIndex < assessmentQuestions.length - 1) {
+        setCurrentQuestionIndex(prev => prev + 1);
+    } else {
+        // Assessment finished
+        setAppState('RESULTS');
+    }
+  };
+
+  const restartAssessment = () => {
+    setAppState('WELCOME');
+    setAssessmentQuestions([]);
+    setCurrentQuestionIndex(0);
+    setResults([]);
+  }
+
+  // Effect to transition from INITIALIZING to WELCOME
+  useEffect(() => {
+    if (appState === 'INITIALIZING' && holisticLoaded && cameraUtilsLoaded && drawingUtilsLoaded) {
+        setAppState('WELCOME');
+    }
+  }, [appState, holisticLoaded, cameraUtilsLoaded, drawingUtilsLoaded]);
+
+  // Effect to manage assessment progression
+  useEffect(() => {
+    if (appState !== 'ASSESSMENT_ACTIVE' || assessmentQuestions.length === 0) return;
+
+    const currentQuestion = assessmentQuestions[currentQuestionIndex];
+    
+    // Toggle peripherals based on question type
+    const needsVoice = currentQuestion.type === 'VOICE';
+    if (needsVoice !== isVoiceActive) {
+        setIsVoiceActive(needsVoice);
+        if (cameraRef.current) {
+            if (needsVoice) cameraRef.current.stop();
+            else cameraRef.current.start();
+        }
+    }
+
+    // Check for correct answer
+    if (currentQuestion.type === 'HAND' && detectedSignal === currentQuestion.id) {
+        handleCorrectAnswer();
+    } else if (currentQuestion.type === 'VOICE' && activeVoiceCommand === currentQuestion.id) {
+        handleCorrectAnswer();
+    }
+
+  }, [appState, currentQuestionIndex, assessmentQuestions, detectedSignal, activeVoiceCommand, isVoiceActive]);
+
+  const currentQuestion = assessmentQuestions[currentQuestionIndex];
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col items-center text-white font-sans p-4">
       <div className="w-full max-w-5xl flex justify-between items-center mb-4 z-10">
-        <div className="flex gap-4">
-            <button onClick={() => setMode('training')} className={`px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'training' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}>Training</button>
-            <button onClick={() => setMode('assessment')} className={`px-6 py-2 rounded-lg font-bold transition-colors ${mode === 'assessment' ? 'bg-blue-600' : 'bg-slate-800 text-slate-400'}`}>Assessment</button>
-        </div>
+        <h1 className="text-2xl font-bold text-slate-300">Crane Signal Assessment</h1>
         <div className="flex gap-2">
             <button onClick={() => setShowDebug(!showDebug)} className={`px-3 py-2 rounded-lg border text-xs font-mono transition-colors ${showDebug ? 'bg-green-900/50 border-green-500 text-green-400' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
                 {showDebug ? 'DEBUG ON' : 'DEBUG OFF'}
             </button>
-            <button onClick={toggleVoice} className={`flex items-center gap-2 px-4 py-2 rounded-lg border ${isVoiceActive ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
+            {/* The mic button is now more of an indicator, controlled by the assessment state */}
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-lg border ${isVoiceActive ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
                 <div className={`w-2 h-2 rounded-full ${isVoiceActive ? 'bg-red-500 animate-pulse' : 'bg-slate-500'}`} />
                 <span className="text-sm font-mono">Mic</span>
-            </button>
+            </div>
         </div>
       </div>
 
       {/* SIDE-BY-SIDE LAYOUT */}
       <div className="flex flex-row justify-center gap-4 w-full px-4">
           <div className="relative w-full max-w-5xl aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex items-center justify-center">
-              {(!holisticLoaded) && (
+              {appState === 'INITIALIZING' && (
                  <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900 text-white">
                    <div className="text-center">
                       <div className="text-2xl font-bold mb-2 animate-pulse">Loading AI Models...</div>
@@ -233,12 +304,25 @@ const App = () => {
                    </div>
                  </div>
               )}
-              <video ref={webcamRef} className={`hidden ${isVoiceActive ? 'invisible' : ''}`} playsInline muted autoPlay></video>
-              <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover transform -scale-x-100 ${isVoiceActive ? 'invisible' : ''}`} />
+              {appState === 'WELCOME' && (
+                  <div className="text-center z-20">
+                      {/* You can add an iFrame video here later */}
+                      <h2 className="text-3xl font-bold mb-6">Welcome to the Assessment</h2>
+                      <button onClick={startAssessment} className="px-8 py-3 rounded-lg font-bold transition-colors bg-blue-600 hover:bg-blue-500 text-white text-lg">
+                          Begin Assessment
+                      </button>
+                  </div>
+              )}
+
+              <video ref={webcamRef} className={`hidden ${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} playsInline muted autoPlay></video>
+              <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover transform -scale-x-100 ${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} />
               
-              {isVoiceActive && <VoiceDrill activeCommand={activeVoiceCommand} />}
-              <HUD mode={mode} leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />
-              <AssessmentDrill mode={mode} target={drillTarget} success={drillSuccess} onStart={startDrill} onNext={() => setDrillTarget(null)} />
+              {appState === 'ASSESSMENT_ACTIVE' && currentQuestion?.type === 'VOICE' && <VoiceDrill activeCommand={activeVoiceCommand} />}
+              
+              {appState === 'ASSESSMENT_ACTIVE' && <HUD mode="assessment" leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />}
+              {appState === 'ASSESSMENT_ACTIVE' && <AssessmentDrill mode="assessment" target={currentQuestion?.prompt} success={false} />}
+
+              {appState === 'RESULTS' && <ResultsScreen results={results} onRestart={restartAssessment} />}
           </div>
 
           {showDebug && (
@@ -248,11 +332,6 @@ const App = () => {
           )}
       </div>
 
-      {mode === 'training' && (
-        <div className="mt-6 px-6 py-3 bg-slate-800 rounded-full border border-slate-700 text-slate-400 text-sm text-center">
-            Try: <span className="text-yellow-400 font-bold">Extend Boom</span> (Thumbs OUT), <span className="text-yellow-400 font-bold">Swing Boom</span> (Blade Hand), or <span className="text-yellow-400 font-bold">Dog Everything</span>
-        </div>
-      )}
     </div>
   );
 };
