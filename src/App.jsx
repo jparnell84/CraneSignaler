@@ -1,8 +1,10 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import DebugPanel from './components/DebugPanel';
 import { db, auth } from './firebase';
-import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
+import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { SIGNAL_RULES } from './core/signals';
+import { useAuth } from './context/AuthContext';
 
 // --- 1. UTILITY: Script Loader for MediaPipe ---
 const useMediaPipeScript = (url) => {
@@ -26,7 +28,8 @@ import VoiceDrill from './components/VoiceDrill';
 import AssessmentDrill from './components/AssessmentDrill';
 import ResultsScreen from './components/ResultsScreen';
 import useSpeechRecognition from './hooks/useSpeechRecognition';
-import { doc, getDoc } from 'firebase/firestore';
+import { captureSnapshot } from './core/evidence';
+import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 // --- 4. ASSESSMENT CONFIGURATION ---
 const QUESTION_BANK = [
@@ -56,18 +59,17 @@ const App = () => {
   const [rightAngle, setRightAngle] = useState(0);
   const [debugStats, setDebugStats] = useState(null);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
-  const { text: spokenText } = useSpeechRecognition(isVoiceActive);
+  const { text: spokenText, confidence } = useSpeechRecognition(isVoiceActive);
   const [activeVoiceCommand, setActiveVoiceCommand] = useState('NONE');
   const [assessmentQuestions, setAssessmentQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [results, setResults] = useState([]); // [{ question, correct, time }]
-
-  const showDebugRef = useRef(showDebug);
-  useEffect(() => {
-    showDebugRef.current = showDebug;
-  }, [showDebug]);
+  const { user, isAdmin } = useAuth(); // Use the context
+  const [results, setResults] = useState([]); // [{ question, correct, timeTaken, evidence }]
+  const [voiceAttemptCount, setVoiceAttemptCount] = useState(0);
+  const [feedbackMessage, setFeedbackMessage] = useState(null);
+  const [questionStartTime, setQuestionStartTime] = useState(null);
+  const [lastSubmissionId, setLastSubmissionId] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
@@ -77,15 +79,6 @@ const App = () => {
   const rightWristHistory = useRef([]);
   const leftHandHistory = useRef([]);
   const rightHandHistory = useRef([]);
-
-  const toggleVoice = () => {
-      setIsVoiceActive(!isVoiceActive);
-      // Stop/start the camera to save resources and hide the feed.
-      if (cameraRef.current) {
-        if (!isVoiceActive) cameraRef.current.stop();
-        else cameraRef.current.start();
-      }
-  };
 
   const updateGeneralHistory = (landmark, historyRef) => {
       const data = landmark ? (Array.isArray(landmark) ? landmark : { x: landmark.x, y: landmark.y }) : null;
@@ -219,27 +212,6 @@ const App = () => {
     }
   }, [holisticLoaded, cameraUtilsLoaded, drawingUtilsLoaded, onResults]);
 
-  // --- AUTH & ADMIN LOGIC ---
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        // Check for admin role in Firestore
-        const userDocRef = doc(db, 'users', currentUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists() && userDoc.data().role === 'admin') {
-          setIsAdmin(true);
-        } else {
-          setIsAdmin(false);
-        }
-      } else {
-        setUser(null);
-        setIsAdmin(false);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
   const handleAdminLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
@@ -260,19 +232,69 @@ const App = () => {
       setAssessmentQuestions(shuffledQuestions);
       setCurrentQuestionIndex(0);
       setResults([]);
+      setVoiceAttemptCount(0);
+      setQuestionStartTime(Date.now());
       setAppState('ASSESSMENT_ACTIVE');
   };
 
-  const handleCorrectAnswer = () => {
-    // In a real scenario, you'd log the result with timing, etc.
-    setResults(prev => [...prev, { question: assessmentQuestions[currentQuestionIndex], correct: true }]);
+  const handleCorrectAnswer = async () => {
+    if (isProcessing) return; // Prevent double-triggering
+    setIsProcessing(true);
+
+    const currentQuestion = assessmentQuestions[currentQuestionIndex];
+    const urlParams = new URLSearchParams(window.location.search);
+    const userId = urlParams.get('user_id') || (user ? user.uid : 'anonymous');
+
+    // --- New Confidence Check for Voice ---
+    if (currentQuestion.type === 'VOICE') {
+        const CONFIDENCE_THRESHOLD = 0.6; // 60% confidence required
+        if (confidence < CONFIDENCE_THRESHOLD) {
+            if (voiceAttemptCount < 1) {
+                // First failed attempt
+                setVoiceAttemptCount(1);
+                setFeedbackMessage("I didn't catch that. Please say it again.");
+                setIsProcessing(false); // Allow another attempt
+                return; // Stop processing this answer
+            }
+            // Second attempt also failed, so we will proceed to fail the question
+        }
+    }
+
+    // Clear any feedback messages
+    if (feedbackMessage) {
+        setFeedbackMessage(null);
+    }
+    // --- End Confidence Check ---
+
+    let evidence = null;
+    if (currentQuestion.type === 'HAND') {
+        // Capture visual evidence for hand signals
+        evidence = await captureSnapshot(webcamRef, canvasRef, userId, currentQuestion.id);
+    } else if (currentQuestion.type === 'VOICE') {
+        // Capture transcript for voice commands
+        evidence = {
+            transcript: spokenText,
+            // confidence: 0.95 // Placeholder if your hook provides it
+        };
+    }
+
+    const timeTaken = (Date.now() - questionStartTime) / 1000; // in seconds
+    setResults(prev => [...prev, { 
+        question: currentQuestion, 
+        correct: true, 
+        timeTaken,
+        evidence
+    }]);
 
     if (currentQuestionIndex < assessmentQuestions.length - 1) {
         setCurrentQuestionIndex(prev => prev + 1);
+        setVoiceAttemptCount(0); // Reset for next question
+        setQuestionStartTime(Date.now()); // Reset timer for next question
     } else {
-        // Assessment finished
         setAppState('RESULTS');
     }
+
+    setIsProcessing(false);
   };
 
   const restartAssessment = () => {
@@ -280,6 +302,42 @@ const App = () => {
     setAssessmentQuestions([]);
     setCurrentQuestionIndex(0);
     setResults([]);
+    setVoiceAttemptCount(0);
+    setFeedbackMessage(null);
+    setLastSubmissionId(null);
+    setIsProcessing(false);
+  }
+
+  const handleSubmitResults = async () => {
+    setAppState('SUBMITTING');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const userId = urlParams.get('user_id') || (user ? user.uid : 'anonymous');
+
+    const score = results.filter(r => r.correct).length;
+    const total = results.length;
+
+    const submissionData = {
+      timestamp: serverTimestamp(),
+      userId: userId,
+      score: score,
+      total: total,
+      details: results.map(r => ({
+        signal: r.question.id,
+        result: r.correct ? 'pass' : 'fail', // Assuming all recorded results are passes for now
+        timeTaken: r.timeTaken,
+        evidence: r.evidence || null,
+      }))
+    };
+
+    try {
+      const docRef = await addDoc(collection(db, "assessments"), submissionData);
+      setLastSubmissionId(docRef.id);
+      setAppState('COMPLETE');
+    } catch (e) {
+      console.error("Error adding document: ", e);
+      setAppState('RESULTS'); // Go back to results screen on error
+    }
   }
 
   const simulateLms = () => {
@@ -306,6 +364,7 @@ const App = () => {
   // Effect to manage assessment progression
   useEffect(() => {
     if (appState !== 'ASSESSMENT_ACTIVE' || assessmentQuestions.length === 0) return;
+    if (!questionStartTime) setQuestionStartTime(Date.now()); // Ensure timer starts if it hasn't
 
     const currentQuestion = assessmentQuestions[currentQuestionIndex];
     
@@ -326,7 +385,7 @@ const App = () => {
         handleCorrectAnswer();
     }
 
-  }, [appState, currentQuestionIndex, assessmentQuestions, detectedSignal, activeVoiceCommand, isVoiceActive]);
+  }, [appState, currentQuestionIndex, assessmentQuestions, detectedSignal, activeVoiceCommand, isVoiceActive, confidence]);
 
   const currentQuestion = assessmentQuestions[currentQuestionIndex];
 
@@ -340,7 +399,12 @@ const App = () => {
                 <div className={`w-2 h-2 rounded-full ${isVoiceActive ? 'bg-red-500 animate-pulse' : 'bg-slate-500'}`} />
                 <span className="text-sm font-mono">Mic</span>
             </div>
-            {isAdmin && <span className="px-3 py-1 rounded-full bg-green-900/50 border border-green-500 text-green-400 text-xs font-mono">ADMIN</span>}
+            {isAdmin && (
+                <div className="flex items-center gap-2">
+                    <span className="px-3 py-1 rounded-full bg-green-900/50 border border-green-500 text-green-400 text-xs font-mono">ADMIN</span>
+                    <Link to="/admin" className="px-3 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-mono">Dashboard</Link>
+                </div>
+            )}
         </div>
       </div>
 
@@ -379,13 +443,41 @@ const App = () => {
               
               {appState === 'ASSESSMENT_ACTIVE' && <HUD mode="assessment" leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />}
               {appState === 'ASSESSMENT_ACTIVE' && <AssessmentDrill mode="assessment" target={currentQuestion?.prompt} success={false} />}
+              
+              {appState === 'ASSESSMENT_ACTIVE' && feedbackMessage && (
+                <div className="absolute bottom-1/4 left-1/2 -translate-x-1/2 text-center p-4 bg-black/50 rounded-lg z-30">
+                    <p className="text-yellow-300 text-lg">{feedbackMessage}</p>
+                </div>
+              )}
+
               {appState === 'ASSESSMENT_ACTIVE' && isAdmin && (
                 <button onClick={forcePass} className="absolute bottom-4 right-4 px-4 py-2 text-xs rounded-lg bg-purple-600/50 border border-purple-400 text-purple-300 z-30">
                     Force Pass
                 </button>
               )}
 
-              {appState === 'RESULTS' && <ResultsScreen results={results} onRestart={restartAssessment} />}
+              {isProcessing && (
+                 <div className="absolute inset-0 flex items-center justify-center z-40 bg-slate-900/80 backdrop-blur-sm text-white">
+                    <div className="text-xl font-bold mb-2 animate-pulse">Processing...</div>
+                 </div>
+              )}
+
+              {appState === 'RESULTS' && <ResultsScreen results={results} onRestart={restartAssessment} onSubmit={handleSubmitResults} />}
+
+              {appState === 'SUBMITTING' && (
+                 <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900/95 text-white">
+                    <div className="text-2xl font-bold mb-2 animate-pulse">Submitting Results...</div>
+                 </div>
+              )}
+
+              {appState === 'COMPLETE' && (
+                 <div className="absolute inset-0 bg-slate-900/95 flex flex-col items-center justify-center z-30 text-white p-8 text-center">
+                    <h2 className="text-4xl font-bold mb-4 text-green-400">Submission Successful!</h2>
+                    <p className="text-slate-300 mb-6">Your assessment results have been saved.</p>
+                    {isAdmin && <p className="text-xs text-slate-500 mb-8">Firestore Doc ID: {lastSubmissionId}</p>}
+                    <button onClick={restartAssessment} className="px-8 py-3 rounded-lg font-bold transition-colors bg-blue-600 hover:bg-blue-500 text-white text-lg">Start Over</button>
+                 </div>
+              )}
           </div>
 
           {isAdmin && (

@@ -1,6 +1,6 @@
 import React from 'react';
 
-const ResultsScreen = ({ results, onRestart }) => {
+const ResultsScreen = ({ results, onRestart, onSubmit }) => {
     const correctAnswers = results.filter(r => r.correct).length;
     const totalQuestions = results.length;
     const score = `${correctAnswers} / ${totalQuestions}`;
@@ -21,9 +21,14 @@ const ResultsScreen = ({ results, onRestart }) => {
                 {passed ? "Congratulations, you passed!" : "You did not meet the passing requirement. Please try again."}
             </p>
 
-            <button onClick={onRestart} className="px-8 py-3 rounded-lg font-bold transition-colors bg-blue-600 hover:bg-blue-500 text-white text-lg">
-                Retry Assessment
-            </button>
+            <div className="flex gap-4">
+                <button onClick={onRestart} className="px-8 py-3 rounded-lg font-bold transition-colors bg-slate-700 hover:bg-slate-600 text-white text-lg">
+                    Retry
+                </button>
+                <button onClick={onSubmit} className="px-8 py-3 rounded-lg font-bold transition-colors bg-blue-600 hover:bg-blue-500 text-white text-lg">
+                    Submit Results
+                </button>
+            </div>
         </div>
     );
 };
