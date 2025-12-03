@@ -4,7 +4,7 @@ import DebugPanel from './components/DebugPanel';
 import { db, auth } from './firebase';
 import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { SIGNAL_RULES } from './core/signals';
-import { useAuth } from './context/AuthContext';
+import { useAuth } from './AuthContext';
 
 // --- 1. UTILITY: Script Loader for MediaPipe ---
 const useMediaPipeScript = (url) => {
@@ -34,7 +34,6 @@ import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/fires
 // --- 4. ASSESSMENT CONFIGURATION ---
 const QUESTION_BANK = [
     ...Object.keys(SIGNAL_RULES).map(sig => ({ type: 'HAND', id: sig, prompt: `Perform: ${sig}` })),
-    // Add voice command questions here. Using placeholders for now.
     { type: 'VOICE', id: 'SWING BOOM', prompt: 'The load is drifting to the side. Correct it.' },
     { type: 'VOICE', id: 'STOP', prompt: 'An obstacle is in the path. Halt the operation.' },
     { type: 'VOICE', id: 'DOG EVERYTHING', prompt: 'A non-essential person entered the work area. Pause all movement.' }

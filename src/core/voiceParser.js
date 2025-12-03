@@ -1,8 +1,8 @@
 export const PARSER_CONSTANTS = {
     // We cover variations for better UX
-    FUNCTIONS: ['hoist', 'lower', 'swing', 'travel', 'boom', 'bridge', 'trolley'],
+    FUNCTIONS: ['hoist', 'lower', 'swing', 'travel', 'boom', 'bridge', 'trolley', 'extend', 'retract'],
     STOP: ['stop', 'dog', 'hold', 'halt'],
-    MODIFIERS: ['slow', 'easy', 'fast', 'creep'],
+    MODIFIERS: ['slow', 'easy', 'fast', 'creep','emergency'],
 };
 
 export const parseVoiceCommand = (text) => {
