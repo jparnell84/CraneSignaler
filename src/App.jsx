@@ -64,6 +64,9 @@ const shuffleArray = (array) => {
 
 // --- 3. MAIN APP COMPONENT ---
 
+// The time in milliseconds a user must hold a signal before it's "committed".
+const COMMIT_DURATION = 1500; // 1.5 seconds
+
 const App = () => {
   // Refactored state management for application flow
   const [appState, setAppState] = useState('INITIALIZING'); // INITIALIZING, WELCOME, ASSESSMENT_ACTIVE, RESULTS, SUBMITTING, COMPLETE
@@ -83,6 +86,7 @@ const App = () => {
   const [questionStartTime, setQuestionStartTime] = useState(null);
   const [lastSubmissionId, setLastSubmissionId] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [holdState, setHoldState] = useState(null); // { signal: 'STOP', startTime: Date.now(), evidence: '...' }
 
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
@@ -260,7 +264,7 @@ const App = () => {
       setAppState('ASSESSMENT_ACTIVE');
   };
 
-  const handleCorrectAnswer = async () => {
+  const handleCorrectAnswer = async (lockedEvidence) => {
     if (isProcessing) return; // Prevent double-triggering
     setIsProcessing(true);
 
@@ -271,8 +275,6 @@ const App = () => {
         return;
     }
     const currentQuestion = assessmentQuestions[currentQuestionIndex];
-    const urlParams = new URLSearchParams(window.location.search);
-    const userId = urlParams.get('user_id') || currentUser.uid;
 
     // --- New Confidence Check for Voice ---
     if (currentQuestion.type === 'VOICE') {
@@ -295,28 +297,17 @@ const App = () => {
     }
     // --- End Confidence Check ---
 
-    let evidence = null;
-    if (currentQuestion.type === 'HAND') {
-        // Capture visual evidence for hand signals
-        evidence = await captureSnapshot(webcamRef, canvasRef, userId, currentQuestion.id);
-    } else if (currentQuestion.type === 'VOICE') {
-        // Capture transcript for voice commands
-        evidence = {
-            transcript: spokenText,
-            // confidence: 0.95 // Placeholder if your hook provides it
-        };
-    }
-
     const timeTaken = (Date.now() - questionStartTime) / 1000; // in seconds
     setResults(prev => [...prev, { 
         question: currentQuestion, 
         correct: true, 
         timeTaken,
-        evidence
+        evidence: lockedEvidence
     }]);
 
     if (currentQuestionIndex < assessmentQuestions.length - 1) {
         setCurrentQuestionIndex(prev => prev + 1);
+        setHoldState(null); // Reset hold state for the next question
         setVoiceAttemptCount(0); // Reset for next question
         setQuestionStartTime(Date.now()); // Reset timer for next question
     } else {
@@ -325,6 +316,40 @@ const App = () => {
 
     setIsProcessing(false);
   };
+
+  const handleIncorrectAnswer = async (lockedEvidence) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+
+    const currentUser = await getOrCreateUser();
+    if (!currentUser) {
+        console.error("Could not get or create a user for incorrect answer. Aborting.");
+        setIsProcessing(false);
+        return;
+    }
+    const currentQuestion = assessmentQuestions[currentQuestionIndex];
+
+    const timeTaken = (Date.now() - questionStartTime) / 1000;
+    setResults(prev => [...prev, {
+        question: currentQuestion,
+        correct: false,
+        timeTaken,
+        evidence: lockedEvidence
+    }]);
+
+    // Move to the next question or end the assessment
+    if (currentQuestionIndex < assessmentQuestions.length - 1) {
+        setCurrentQuestionIndex(prev => prev + 1);
+        setHoldState(null); // Reset hold state for the next question
+        setVoiceAttemptCount(0);
+        setQuestionStartTime(Date.now());
+    } else {
+        setAppState('RESULTS');
+    }
+
+    setIsProcessing(false);
+  };
+
 
   const restartAssessment = () => {
     setAppState('WELCOME');
@@ -399,6 +424,9 @@ const App = () => {
   // Effect to manage assessment progression
   useEffect(() => {
     if (appState !== 'ASSESSMENT_ACTIVE' || assessmentQuestions.length === 0) return;
+    // This is the crucial fix: Do not run any signal detection logic while an answer is being processed.
+    if (isProcessing) return;
+
     if (!questionStartTime) setQuestionStartTime(Date.now()); // Ensure timer starts if it hasn't
 
     const currentQuestion = assessmentQuestions[currentQuestionIndex];
@@ -414,15 +442,53 @@ const App = () => {
     }
 
     // Check for correct answer
-    if (currentQuestion.type === 'HAND' && detectedSignal === currentQuestion.id) {
-        handleCorrectAnswer();
-    } else if (currentQuestion.type === 'VOICE' && activeVoiceCommand === currentQuestion.id) {
-        handleCorrectAnswer();
+    const activeSignal = currentQuestion.type === 'VOICE' ? activeVoiceCommand : detectedSignal;
+
+    // If a signal is being held and it changes, or if no signal is detected, reset the hold state.
+    if (!activeSignal || activeSignal === 'NONE' || (holdState && holdState.signal !== activeSignal)) {
+        setHoldState(null);
+        return;
     }
 
-  }, [appState, currentQuestionIndex, assessmentQuestions, detectedSignal, activeVoiceCommand, isVoiceActive, confidence]);
+    // If a new, valid signal is detected, start the hold timer.
+    if (activeSignal && activeSignal !== 'NONE' && !holdState) {
+        // Capture evidence AT THE START of the hold. This is the crucial fix.
+        const captureAndSetHoldState = async () => {
+            const currentUser = await getOrCreateUser();
+            if (!currentUser) return;
+
+            const userId = new URLSearchParams(window.location.search).get('user_id') || currentUser.uid;
+            let evidence = null;
+            if (currentQuestion.type === 'HAND') {
+                evidence = await captureSnapshot(webcamRef, canvasRef, userId, activeSignal);
+            } else { // VOICE
+                evidence = { transcript: spokenText, confidence: confidence };
+            }
+            
+            setHoldState({ signal: activeSignal, startTime: Date.now(), evidence: evidence });
+        };
+        captureAndSetHoldState();
+        return;
+    }
+
+    // If a signal is being held, check if the timer has completed.
+    if (holdState) {
+        const elapsedTime = Date.now() - holdState.startTime;
+        if (elapsedTime >= COMMIT_DURATION) {
+            // Timer complete! Lock the signal and check if it's correct.
+            const lockedSignal = holdState.signal;
+            if (lockedSignal === currentQuestion.id) {
+                handleCorrectAnswer(holdState.evidence); // Correct answer logic
+            } else {
+                handleIncorrectAnswer(holdState.evidence); // Incorrect answer logic
+            }
+        }
+    }
+
+  }, [appState, currentQuestionIndex, assessmentQuestions, detectedSignal, activeVoiceCommand, isVoiceActive, confidence, holdState, isProcessing]);
 
   const currentQuestion = assessmentQuestions[currentQuestionIndex];
+  const holdProgress = holdState ? (Date.now() - holdState.startTime) / COMMIT_DURATION : 0;
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col items-center text-white font-sans p-4">
@@ -488,7 +554,7 @@ const App = () => {
                         </div>
                     </div>
                 )}
-                {appState === 'ASSESSMENT_ACTIVE' && <HUD mode="assessment" leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />}
+                {appState === 'ASSESSMENT_ACTIVE' && <HUD mode="assessment" leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} holdProgress={holdProgress} />}
                 
                 {appState === 'ASSESSMENT_ACTIVE' && feedbackMessage && (
                     <div className="absolute bottom-1/4 left-1/2 -translate-x-1/2 text-center p-4 bg-black/50 rounded-lg z-30">
