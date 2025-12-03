@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import DebugPanel from './components/DebugPanel';
 import { db, auth } from './firebase.js';
-import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { GoogleAuthProvider, signInWithPopup, signOut, signInAnonymously } from "firebase/auth";
 import { SIGNAL_RULES } from './core/signals';
 import { useAuth } from './AuthContext';
 
@@ -24,7 +24,6 @@ const useMediaPipeScript = (url) => {
 // --- 2. CORE & UI IMPORTS ---
 import { getDebugStats, calculateAngle } from './core/geometry';
 import HUD from './components/HUD';
-import VoiceDrill from './components/VoiceDrill';
 import AssessmentDrill from './components/AssessmentDrill';
 import ResultsScreen from './components/ResultsScreen';
 import useSpeechRecognition from './hooks/useSpeechRecognition';
@@ -32,12 +31,27 @@ import { captureSnapshot } from './core/evidence';
 import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 // --- 4. ASSESSMENT CONFIGURATION ---
-const QUESTION_BANK = [
-    ...Object.keys(SIGNAL_RULES).map(sig => ({ type: 'HAND', id: sig, prompt: `Perform: ${sig}` })),
-    { type: 'VOICE', id: 'SWING BOOM', prompt: 'The load is drifting to the side. Correct it.' },
+// This is now the single source of truth for the assessment.
+// Add or remove signal IDs from this list to control the assessment content.
+const ASSESSMENT_CONFIG = [
+    // Hand Signals
+    { type: 'HAND', id: 'STOP' },
+    { type: 'HAND', id: 'HOIST LOAD' },
+    { type: 'HAND', id: 'LOWER LOAD' },
+    { type: 'HAND', id: 'SWING BOOM' },
+    { type: 'HAND', id: 'EXTEND BOOM' },
+    { type: 'HAND', id: 'RETRACT BOOM' },
+    { type: 'HAND', id: 'EMERGENCY STOP' },
+    { type: 'HAND', id: 'TROLLEY TRAVEL' },
+
+    // Voice Signals (with custom prompts)
+    { type: 'VOICE', id: 'SWING BOOM', prompt: 'The load is drifting. Correct it.' },
     { type: 'VOICE', id: 'STOP', prompt: 'An obstacle is in the path. Halt the operation.' },
     { type: 'VOICE', id: 'DOG EVERYTHING', prompt: 'A non-essential person entered the work area. Pause all movement.' }
 ];
+
+// The QUESTION_BANK is now generated from the configuration above.
+const QUESTION_BANK = ASSESSMENT_CONFIG.map(q => ({ ...q, prompt: q.prompt || `Perform: ${q.id}` }));
 
 const shuffleArray = (array) => {
     const newArray = [...array];
@@ -224,6 +238,16 @@ const App = () => {
     signOut(auth);
   };
 
+  // Helper to ensure a user (anonymous or signed-in) exists before proceeding.
+  const getOrCreateUser = async () => {
+    // If the user from AuthContext already exists, return it.
+    if (user) return user;
+    // Otherwise, sign in anonymously and return the new user.
+    // This will trigger the onAuthStateChanged in AuthContext.
+    const userCredential = await signInAnonymously(auth);
+    return userCredential.user;
+  };
+
 
   // --- ASSESSMENT FLOW LOGIC ---
   const startAssessment = () => {
@@ -240,9 +264,15 @@ const App = () => {
     if (isProcessing) return; // Prevent double-triggering
     setIsProcessing(true);
 
+    const currentUser = await getOrCreateUser();
+    if (!currentUser) {
+        console.error("Could not get or create a user. Aborting.");
+        setIsProcessing(false);
+        return;
+    }
     const currentQuestion = assessmentQuestions[currentQuestionIndex];
     const urlParams = new URLSearchParams(window.location.search);
-    const userId = urlParams.get('user_id') || (user ? user.uid : 'anonymous');
+    const userId = urlParams.get('user_id') || currentUser.uid;
 
     // --- New Confidence Check for Voice ---
     if (currentQuestion.type === 'VOICE') {
@@ -310,8 +340,14 @@ const App = () => {
   const handleSubmitResults = async () => {
     setAppState('SUBMITTING');
 
+    const currentUser = await getOrCreateUser();
+    if (!currentUser) {
+        console.error("Could not get or create a user. Aborting submission.");
+        setAppState('RESULTS'); // Go back to results screen on error
+        return;
+    }
     const urlParams = new URLSearchParams(window.location.search);
-    const userId = urlParams.get('user_id') || (user ? user.uid : 'anonymous');
+    const userId = urlParams.get('user_id') || currentUser.uid;
 
     const score = results.filter(r => r.correct).length;
     const total = results.length;
@@ -442,10 +478,16 @@ const App = () => {
                     </div>
                 )}
 
-                <video ref={webcamRef} className={`${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} playsInline muted autoPlay></video>
-                <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover ${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} />
+                <video ref={webcamRef} className={`${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'hidden' : ''}`} playsInline muted autoPlay></video>
+                <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover ${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'hidden' : ''}`} />
                 
-                {appState === 'ASSESSMENT_ACTIVE' && currentQuestion?.type === 'VOICE' && <VoiceDrill activeCommand={activeVoiceCommand} />}
+                {appState === 'ASSESSMENT_ACTIVE' && currentQuestion?.type === 'VOICE' && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-800 z-10">
+                        <div className="text-center">
+                            <p className="text-2xl font-bold text-slate-400">Voice Mode Active</p>
+                        </div>
+                    </div>
+                )}
                 {appState === 'ASSESSMENT_ACTIVE' && <HUD mode="assessment" leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />}
                 
                 {appState === 'ASSESSMENT_ACTIVE' && feedbackMessage && (

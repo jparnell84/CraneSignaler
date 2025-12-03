@@ -5,7 +5,7 @@ export const captureSnapshot = async (webcamRef, canvasRef, userId, drillId) => 
   if (!webcamRef.current || !canvasRef.current) return null;
 
   // 1. Create a temporary canvas to merge Video + AI Skeleton
-  const video = webcamRef.current.video;
+  const video = webcamRef.current;
   const skeletonCanvas = canvasRef.current;
   
   const tempCanvas = document.createElement('canvas');
