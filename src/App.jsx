@@ -408,82 +408,92 @@ const App = () => {
       </div>
 
       {/* SIDE-BY-SIDE LAYOUT */}
-      <div className="flex flex-row justify-center gap-4 w-full px-4">
-          <div className="relative w-full max-w-5xl aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex items-center justify-center">
-              {appState === 'INITIALIZING' && (
-                 <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900 text-white">
-                   <div className="text-center">
-                      <div className="text-2xl font-bold mb-2 animate-pulse">Loading AI Models...</div>
-                      <div className="text-slate-400">Please allow camera access.</div>
-                   </div>
-                 </div>
-              )}
-              {appState === 'WELCOME' && (
-                  <div className="text-center z-20">
-                      {/* You can add an iFrame video here later */}
-                      <h2 className="text-3xl font-bold mb-6">Welcome to the Assessment</h2>
-                      <button onClick={startAssessment} className="px-8 py-3 rounded-lg font-bold transition-colors bg-blue-600 hover:bg-blue-500 text-white text-lg">
-                          Begin Assessment
-                      </button>
-                      {isAdmin && (
-                        <div className="mt-8 flex justify-center gap-4">
-                            <button onClick={simulateLms} className="px-4 py-2 text-xs rounded-lg bg-yellow-600/20 border border-yellow-500 text-yellow-400">
-                                Simulate LMS
-                            </button>
+      <div className="w-full max-w-5xl flex-grow flex flex-col">
+        {/* --- PROMPT AREA (MOVED) --- */}
+        {appState === 'ASSESSMENT_ACTIVE' && (
+            <div className="w-full mb-4 text-white">
+                 <AssessmentDrill target={currentQuestion?.prompt} />
+            </div>
+        )}
+
+        <div className="flex flex-row justify-center gap-4 w-full flex-grow">
+            <div className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex items-center justify-center">
+                {appState === 'INITIALIZING' && (
+                    <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900 text-white">
+                        <div className="text-center">
+                            <div className="text-2xl font-bold mb-2 animate-pulse">Loading AI Models...</div>
+                            <div className="text-slate-400">Please allow camera access.</div>
                         </div>
-                      )}
-                  </div>
-              )}
+                    </div>
+                )}
+                {appState === 'WELCOME' && (
+                    <div className="text-center z-20">
+                        <h2 className="text-3xl font-bold mb-6">Welcome to the Assessment</h2>
+                        <button onClick={startAssessment} className="px-8 py-3 rounded-lg font-bold transition-colors bg-blue-600 hover:bg-blue-500 text-white text-lg">
+                            Begin Assessment
+                        </button>
+                        {isAdmin && (
+                            <div className="mt-8 flex justify-center gap-4">
+                                <button onClick={simulateLms} className="px-4 py-2 text-xs rounded-lg bg-yellow-600/20 border border-yellow-500 text-yellow-400">
+                                    Simulate LMS
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
 
-              <video ref={webcamRef} className={`hidden ${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} playsInline muted autoPlay></video>
-              <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover transform -scale-x-100 ${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} />
-              
-              {appState === 'ASSESSMENT_ACTIVE' && currentQuestion?.type === 'VOICE' && <VoiceDrill activeCommand={activeVoiceCommand} />}
-              
-              {appState === 'ASSESSMENT_ACTIVE' && <HUD mode="assessment" leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />}
-              {appState === 'ASSESSMENT_ACTIVE' && <AssessmentDrill mode="assessment" target={currentQuestion?.prompt} success={false} />}
-              
-              {appState === 'ASSESSMENT_ACTIVE' && feedbackMessage && (
-                <div className="absolute bottom-1/4 left-1/2 -translate-x-1/2 text-center p-4 bg-black/50 rounded-lg z-30">
-                    <p className="text-yellow-300 text-lg">{feedbackMessage}</p>
+                {/* --- Conditional Rendering for Hand Signals --- */}
+                {/* Only render video/canvas when needed to ensure ref is valid for snapshots */}
+                {appState === 'ASSESSMENT_ACTIVE' && currentQuestion?.type === 'HAND' && (
+                    <video ref={webcamRef} playsInline muted autoPlay></video>
+                )}
+                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover" />
+                <video ref={webcamRef} className={`${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} playsInline muted autoPlay></video>
+                <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover ${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} />
+                
+                {appState === 'ASSESSMENT_ACTIVE' && currentQuestion?.type === 'VOICE' && <VoiceDrill activeCommand={activeVoiceCommand} />}
+                {appState === 'ASSESSMENT_ACTIVE' && <HUD mode="assessment" leftAngle={leftAngle} rightAngle={rightAngle} signal={detectedSignal} isVoiceActive={isVoiceActive} voiceCommand={activeVoiceCommand} />}
+                
+                {appState === 'ASSESSMENT_ACTIVE' && feedbackMessage && (
+                    <div className="absolute bottom-1/4 left-1/2 -translate-x-1/2 text-center p-4 bg-black/50 rounded-lg z-30">
+                        <p className="text-yellow-300 text-lg">{feedbackMessage}</p>
+                    </div>
+                )}
+
+                {appState === 'ASSESSMENT_ACTIVE' && isAdmin && (
+                    <button onClick={forcePass} className="absolute bottom-4 right-4 px-4 py-2 text-xs rounded-lg bg-purple-600/50 border border-purple-400 text-purple-300 z-30">
+                        Force Pass
+                    </button>
+                )}
+
+                {isProcessing && (
+                    <div className="absolute inset-0 flex items-center justify-center z-40 bg-slate-900/80 backdrop-blur-sm text-white">
+                        <div className="text-xl font-bold mb-2 animate-pulse">Processing...</div>
+                    </div>
+                )}
+
+                {appState === 'RESULTS' && <ResultsScreen results={results} onRestart={restartAssessment} onSubmit={handleSubmitResults} />}
+                {appState === 'SUBMITTING' && (
+                    <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900/95 text-white">
+                        <div className="text-2xl font-bold mb-2 animate-pulse">Submitting Results...</div>
+                    </div>
+                )}
+                {appState === 'COMPLETE' && (
+                    <div className="absolute inset-0 bg-slate-900/95 flex flex-col items-center justify-center z-30 text-white p-8 text-center">
+                        <h2 className="text-4xl font-bold mb-4 text-green-400">Submission Successful!</h2>
+                        <p className="text-slate-300 mb-6">Your assessment results have been saved.</p>
+                        {isAdmin && <p className="text-xs text-slate-500 mb-8">Firestore Doc ID: {lastSubmissionId}</p>}
+                        <button onClick={restartAssessment} className="px-8 py-3 rounded-lg font-bold transition-colors bg-blue-600 hover:bg-blue-500 text-white text-lg">Start Over</button>
+                    </div>
+                )}
+            </div>
+
+            {isAdmin && (
+                <div className="hidden lg:block h-full">
+                    <DebugPanel isVisible={isAdmin} stats={debugStats} />
                 </div>
-              )}
-
-              {appState === 'ASSESSMENT_ACTIVE' && isAdmin && (
-                <button onClick={forcePass} className="absolute bottom-4 right-4 px-4 py-2 text-xs rounded-lg bg-purple-600/50 border border-purple-400 text-purple-300 z-30">
-                    Force Pass
-                </button>
-              )}
-
-              {isProcessing && (
-                 <div className="absolute inset-0 flex items-center justify-center z-40 bg-slate-900/80 backdrop-blur-sm text-white">
-                    <div className="text-xl font-bold mb-2 animate-pulse">Processing...</div>
-                 </div>
-              )}
-
-              {appState === 'RESULTS' && <ResultsScreen results={results} onRestart={restartAssessment} onSubmit={handleSubmitResults} />}
-
-              {appState === 'SUBMITTING' && (
-                 <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900/95 text-white">
-                    <div className="text-2xl font-bold mb-2 animate-pulse">Submitting Results...</div>
-                 </div>
-              )}
-
-              {appState === 'COMPLETE' && (
-                 <div className="absolute inset-0 bg-slate-900/95 flex flex-col items-center justify-center z-30 text-white p-8 text-center">
-                    <h2 className="text-4xl font-bold mb-4 text-green-400">Submission Successful!</h2>
-                    <p className="text-slate-300 mb-6">Your assessment results have been saved.</p>
-                    {isAdmin && <p className="text-xs text-slate-500 mb-8">Firestore Doc ID: {lastSubmissionId}</p>}
-                    <button onClick={restartAssessment} className="px-8 py-3 rounded-lg font-bold transition-colors bg-blue-600 hover:bg-blue-500 text-white text-lg">Start Over</button>
-                 </div>
-              )}
-          </div>
-
-          {isAdmin && (
-             <div className="hidden lg:block h-full">
-                 <DebugPanel isVisible={isAdmin} stats={debugStats} />
-             </div>
-          )}
+            )}
+        </div>
       </div>
 
       <footer className="w-full max-w-5xl mt-4 text-center text-slate-500 text-xs">

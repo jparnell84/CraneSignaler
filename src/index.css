@@ -36,18 +36,6 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-/* 4. Video Hiding Hack (Vital for MediaPipe) */
-video {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-  display: block !important; 
-}
-
 canvas {
   transform: scaleX(-1); /* Mirror the camera */
 }
