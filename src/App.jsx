@@ -442,12 +442,6 @@ const App = () => {
                     </div>
                 )}
 
-                {/* --- Conditional Rendering for Hand Signals --- */}
-                {/* Only render video/canvas when needed to ensure ref is valid for snapshots */}
-                {appState === 'ASSESSMENT_ACTIVE' && currentQuestion?.type === 'HAND' && (
-                    <video ref={webcamRef} playsInline muted autoPlay></video>
-                )}
-                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover" />
                 <video ref={webcamRef} className={`${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} playsInline muted autoPlay></video>
                 <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover ${appState !== 'ASSESSMENT_ACTIVE' || currentQuestion?.type !== 'HAND' ? 'invisible' : ''}`} />
                 
