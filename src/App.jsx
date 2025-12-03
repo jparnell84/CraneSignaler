@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import DebugPanel from './components/DebugPanel';
-import { db, auth } from './firebase';
+import { db, auth } from './firebase.js';
 import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { SIGNAL_RULES } from './core/signals';
 import { useAuth } from './AuthContext';
