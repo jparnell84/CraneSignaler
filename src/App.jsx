@@ -67,6 +67,67 @@ const shuffleArray = (array) => {
 // The time in milliseconds a user must hold a signal before it's "committed".
 const COMMIT_DURATION = 1500; // 1.5 seconds
 
+// --- DEBUGGING TOOL ---
+const debugCaptureSnapshot = async (webcamRef, canvasRef, userId, activeSignal) => {
+  console.group(`📸 Diagnostic Capture: ${activeSignal}`);
+  
+  try {
+    // 1. Check References
+    if (!webcamRef?.current) {
+      console.error("❌ CRITICAL: webcamRef.current is null! Component may not be mounted.");
+      console.groupEnd();
+      return null;
+    }
+    if (!canvasRef?.current) {
+      console.error("❌ CRITICAL: canvasRef.current is null!");
+      console.groupEnd();
+      return null;
+    }
+
+    const video = webcamRef.current;
+    
+    // 2. Check Video Stream State
+    // readyState: 0=HAVE_NOTHING, 4=HAVE_ENOUGH_DATA
+    console.log(`Video Status: ReadyState=${video.readyState}, Size=${video.videoWidth}x${video.videoHeight}, Paused=${video.paused}`);
+
+    if (video.readyState < 2 || video.videoWidth === 0) {
+      console.warn("⚠️ WARNING: Video stream is not ready or has 0 width. Capture will fail or be black.");
+      // We explicitly fail here to prevent 'pending' hang if the original code didn't handle this
+      console.groupEnd();
+      return { error: "Video stream not ready" };
+    }
+
+    // 3. Attempt Capture
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    // Set dimensions to match video to ensure no cropping/scaling weirdness
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    ctx.drawImage(video, 0, 0);
+    
+    // Generate a basic data URL to verify image creation works
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
+    console.log(`✅ Success: Generated Snapshot (${dataUrl.length} chars)`);
+    
+    console.groupEnd();
+    
+    // Return a valid object so the "Acquiring" loop completes
+    return { 
+        imageUrl: dataUrl, 
+        timestamp: Date.now(),
+        id: `debug_${Date.now()}` 
+    };
+
+  } catch (error) {
+    console.error("💥 EXCEPTION in capture:", error);
+    console.groupEnd();
+    // Return an error object instead of throwing, so the main loop can exit cleanly
+    return { error: error.message };
+  }
+};
+
 const App = () => {
   // Refactored state management for application flow
   const [appState, setAppState] = useState('INITIALIZING'); // INITIALIZING, WELCOME, ASSESSMENT_ACTIVE, RESULTS, SUBMITTING, COMPLETE
@@ -198,6 +259,37 @@ const App = () => {
       setActiveVoiceCommand(command);
     }
   }, [spokenText, isVoiceActive]);
+
+  useEffect(() => {
+      let timer;
+      // Only run if we are holding, evidence is ready, and we aren't already processing an answer
+      if (holdState && holdState.evidence !== 'pending' && !isProcessing) {
+          
+          const elapsed = Date.now() - holdState.startTime;
+          const timeRemaining = COMMIT_DURATION - elapsed;
+
+          const triggerResult = () => {
+              const currentQuestion = assessmentQuestions[currentQuestionIndex];
+              // Safety check in case the user moved on while timer was pending
+              if (!currentQuestion) return;
+
+              if (holdState.signal === currentQuestion.id) {
+                  handleCorrectAnswer(holdState.evidence);
+              } else {
+                  handleIncorrectAnswer(holdState.evidence);
+              }
+          };
+
+          if (timeRemaining <= 0) {
+              // If time is already up, trigger immediately
+              triggerResult();
+          } else {
+              // Otherwise, set a timer for the exact remaining milliseconds
+              timer = setTimeout(triggerResult, timeRemaining);
+          }
+      }
+      return () => clearTimeout(timer);
+  }, [holdState, isProcessing, currentQuestionIndex, assessmentQuestions]);
 
   useEffect(() => {
     if (holisticLoaded && cameraUtilsLoaded && drawingUtilsLoaded && webcamRef.current) {
@@ -426,6 +518,10 @@ const App = () => {
     if (appState !== 'ASSESSMENT_ACTIVE' || assessmentQuestions.length === 0) return;
     // This is the crucial fix: Do not run any signal detection logic while an answer is being processed.
     if (isProcessing) return;
+    
+    // --- GRACE PERIOD ---
+    // Give the user a moment to reset after a new question appears.
+    if (Date.now() - questionStartTime < 500) return;
 
     if (!questionStartTime) setQuestionStartTime(Date.now()); // Ensure timer starts if it hasn't
 
@@ -451,39 +547,67 @@ const App = () => {
     }
 
     // If a new, valid signal is detected, start the hold timer.
-    if (activeSignal && activeSignal !== 'NONE' && !holdState) {
-        // Capture evidence AT THE START of the hold. This is the crucial fix.
-        const captureAndSetHoldState = async () => {
-            const currentUser = await getOrCreateUser();
-            if (!currentUser) return;
+if (activeSignal && activeSignal !== 'NONE' && !holdState) {
+        // Set hold state immediately with 'pending'
+        setHoldState({ signal: activeSignal, startTime: Date.now(), evidence: 'pending' });
 
-            const userId = new URLSearchParams(window.location.search).get('user_id') || currentUser.uid;
-            let evidence = null;
-            if (currentQuestion.type === 'HAND') {
-                evidence = await captureSnapshot(webcamRef, canvasRef, userId, activeSignal);
-            } else { // VOICE
-                evidence = { transcript: spokenText, confidence: confidence };
+        const captureEvidenceAndUpdateState = async () => {
+            try {
+                const currentUser = await getOrCreateUser();
+                if (!currentUser) return; // Should probably reset hold here too if strictly enforcing auth
+
+                const userId = new URLSearchParams(window.location.search).get('user_id') || currentUser.uid;
+                let evidence = null;
+
+                if (currentQuestion.type === 'HAND') {
+                    // Safety check: ensure webcam is actually ready
+                    if (webcamRef.current && webcamRef.current.readyState === 4) {
+                        evidence = await debugCaptureSnapshot(webcamRef, canvasRef, userId, activeSignal);
+                    } else {
+                        console.warn("Webcam not ready for snapshot");
+                        // Fallback or empty object so we don't get stuck in 'pending'
+                        evidence = { error: "Webcam not ready" };
+                    }
+                } else { // VOICE
+                    evidence = { transcript: spokenText, confidence: confidence };
+                }
+
+                // If evidence is null/undefined here, creates a fallback so we don't hang
+                const finalEvidence = evidence || { error: "Capture failed" };
+
+                // Update the hold state
+                setHoldState(prevState => {
+                    // Only update if we are still holding the same signal
+                    if (prevState && prevState.signal === activeSignal) {
+                        return { ...prevState, evidence: finalEvidence };
+                    }
+                    return prevState;
+                });
+
+            } catch (error) {
+                console.error("Evidence capture error:", error);
+                // CRITICAL FIX: Reset state so the user can try again, rather than hanging forever
+                setHoldState(null);
             }
-            
-            setHoldState({ signal: activeSignal, startTime: Date.now(), evidence: evidence });
         };
-        captureAndSetHoldState();
+
+        captureEvidenceAndUpdateState();
         return;
     }
 
     // If a signal is being held, check if the timer has completed.
-    if (holdState) {
-        const elapsedTime = Date.now() - holdState.startTime;
-        if (elapsedTime >= COMMIT_DURATION) {
+    //if (holdState) {
+    //    const elapsedTime = Date.now() - holdState.startTime;        if (holdState.evidence === 'pending') return; // <-- ADD THIS LINE: Don't process until evidence is ready.
+    //    if (elapsedTime >= COMMIT_DURATION) {
             // Timer complete! Lock the signal and check if it's correct.
-            const lockedSignal = holdState.signal;
-            if (lockedSignal === currentQuestion.id) {
-                handleCorrectAnswer(holdState.evidence); // Correct answer logic
-            } else {
-                handleIncorrectAnswer(holdState.evidence); // Incorrect answer logic
-            }
-        }
-    }
+    //        const lockedSignal = holdState.signal;
+    //        if (lockedSignal === currentQuestion.id) {
+    //            handleCorrectAnswer(holdState.evidence); // Correct answer logic
+    //        } else {
+    //            handleIncorrectAnswer(holdState.evidence); // Incorrect answer logic
+    //        }
+    //    }
+    //}
 
   }, [appState, currentQuestionIndex, assessmentQuestions, detectedSignal, activeVoiceCommand, isVoiceActive, confidence, holdState, isProcessing]);
 
