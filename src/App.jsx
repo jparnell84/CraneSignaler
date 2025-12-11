@@ -250,14 +250,27 @@ const App = () => {
       setActiveVoiceCommand('NONE');
       return;
     }
-    // Find the first matching signal in the spoken text
-    const command = Object.keys(SIGNAL_RULES).find(sig => 
-      spokenText.toLowerCase().includes(sig.toLowerCase())
-    );
 
-    if (command) {
-      setActiveVoiceCommand(command);
+    const text = spokenText.toLowerCase();
+    let foundCommand = 'NONE';
+
+    // More robust parsing logic
+    for (const baseCommand in VOICE_COMMAND_SYNONYMS) {
+        const keywords = [baseCommand.toLowerCase(), ...VOICE_COMMAND_SYNONYMS[baseCommand]];
+        if (keywords.some(kw => text.includes(kw))) {
+            foundCommand = baseCommand;
+
+            // Check for directional words if it's a directional command
+            if (baseCommand === 'SWING BOOM' || baseCommand === 'BRIDGE TRAVEL' || baseCommand === 'TROLLEY TRAVEL') {
+                const direction = DIRECTIONAL_WORDS.find(dir => text.includes(dir));
+                if (direction) {
+                    foundCommand = `${baseCommand} ${direction.toUpperCase()}`;
+                }
+            }
+            break; // Stop after finding the first match
+        }
     }
+    setActiveVoiceCommand(foundCommand);
   }, [spokenText, isVoiceActive]);
 
   useEffect(() => {

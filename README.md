@@ -1,4 +1,5 @@
-🏗️ Crane Signal Trainer (AI-Powered)A real-time computer vision application that evaluates standard Crane & Rigging hand signals using Edge AI.This app runs entirely in the browser (Client-Side) using Google MediaPipe Holistic. It tracks body pose and hand gestures to provide instant feedback to students, ensuring they are performing signals according to OSHA/ASME standards.
+🏗️ Crane Signal Trainer
+A real-time computer vision application that evaluates standard Crane & Rigging hand signals using Edge AI.This app runs entirely in the browser (Client-Side) using Google MediaPipe Holistic. It tracks body pose and hand gestures to provide instant feedback to students, ensuring they are performing signals according to OSHA/ASME standards.
 
 🚀 Key FeaturesReal-Time Evaluation: 
 Analyzes arm angles and finger positions at 30 FPS.

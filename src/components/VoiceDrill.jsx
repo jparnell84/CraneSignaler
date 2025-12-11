@@ -8,11 +8,12 @@ const SPEED = 2; // pixels per frame
 
 // --- MAPPING VOICE COMMANDS TO MOVEMENT VECTORS ---
 const COMMAND_MAP = {
-    'HOIST LOAD': { x: 0, y: -1 },
-    'LOWER LOAD': { x: 0, y: 1 },
-    'TROLLEY TRAVEL': { x: 1, y: 0 },
-    'BRIDGE TRAVEL': { x: -1, y: 0 }, // Let's map this to 'left' for the drill
-    'SWING BOOM': { x: 1, y: 0 }, // Also map to 'right'
+    'HOIST LOAD': { x: 0, y: -1 }, // UP
+    'LOWER LOAD': { x: 0, y: 1 },  // DOWN
+    'SWING BOOM RIGHT': { x: 1, y: 0 },
+    'TROLLEY TRAVEL RIGHT': { x: 1, y: 0 },
+    'SWING BOOM LEFT': { x: -1, y: 0 },
+    'BRIDGE TRAVEL LEFT': { x: -1, y: 0 },
     'STOP': { x: 0, y: 0 },
     'EMERGENCY STOP': { x: 0, y: 0 },
     'DOG EVERYTHING': { x: 0, y: 0 },
@@ -91,6 +92,12 @@ const VoiceDrill = ({ activeCommand }) => {
 
     return (
         <div className="absolute inset-0 flex items-center justify-center bg-slate-800 z-30">
+            {/* Orientation Labels */}
+            <div className="absolute top-4 text-slate-500 font-mono text-sm">UP (Hoist)</div>
+            <div className="absolute bottom-4 text-slate-500 font-mono text-sm">DOWN (Lower)</div>
+            <div className="absolute left-4 text-slate-500 font-mono text-sm -rotate-90 origin-top-left top-1/2 -translate-y-1/2">LEFT (Bridge/Swing)</div>
+            <div className="absolute right-4 text-slate-500 font-mono text-sm rotate-90 origin-top-right top-1/2 -translate-y-1/2">RIGHT (Trolley/Swing)</div>
+
             <div className="relative bg-slate-700 border-4 border-slate-500" style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}>
                 {/* Ground */}
                 <div className="absolute bottom-0 left-0 w-full h-4 bg-green-800" />
