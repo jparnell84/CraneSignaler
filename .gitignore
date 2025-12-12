@@ -1,53 +1,24 @@
-## Node
-/node_modules/
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# Dependencies
+/node_modules
+
+# Vite build output
+/dist
+
+# Log files
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-## Build outputs
-/dist/
-/build/
-/out/
-/.parcel-cache/
-/.vite/
-/.cache/
-
-## Environment
+# Environment variables
 .env
-.env.*
 .env.local
+.env.*.local
 
-## Config
-
-## Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-
-## OS files
+# IDE and OS files
 .DS_Store
 Thumbs.db
-desktop.ini
-ehthumbs.db
-$RECYCLE.BIN/
-
-## IDEs and editors
-.vscode/
 .idea/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-
-## Coverage and test output
-/coverage/
-/.nyc_output/
-
-## Misc
-.pnp
-.pnp.js
-*.tgz
-*.zip
-*.tar.gz
+.vscode/
