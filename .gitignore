@@ -18,6 +18,8 @@ pnpm-debug.log*
 .env.*
 .env.local
 
+## Config
+
 ## Logs
 logs/
 *.log

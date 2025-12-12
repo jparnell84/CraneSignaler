@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const useSpeechRecognition = (isListening) => {
   const [text, setText] = useState('');
+  const [confidence, setConfidence] = useState(0);
   const [isSupported, setIsSupported] = useState(false);
   const recognitionRef = useRef(null);
   const isListeningRef = useRef(isListening); // Ref to track state inside callbacks
@@ -28,13 +29,17 @@ const useSpeechRecognition = (isListening) => {
 
       recognition.onresult = (event) => {
         let finalTranscript = '';
+        let finalConfidence = 0;
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTranscript += event.results[i][0].transcript;
+            // Capture the confidence score of the final result
+            finalConfidence = event.results[i][0].confidence;
           }
         }
         if (finalTranscript) {
            setText(finalTranscript.toLowerCase());
+           setConfidence(finalConfidence);
         }
       };
 
@@ -78,7 +83,7 @@ const useSpeechRecognition = (isListening) => {
     }
   }, [isListening, isSupported]);
 
-  return { text, isSupported };
+  return { text, confidence, isSupported };
 };
 
 export default useSpeechRecognition;
