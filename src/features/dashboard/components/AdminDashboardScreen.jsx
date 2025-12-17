@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
-import { db } from '../../../firebase'; // Adjusted import path
+import { db } from '../../../firebase'; // Assuming firebase.js is in the src/ directory
 import { Link } from 'react-router-dom';
 
 const AdminDashboardScreen = () => {

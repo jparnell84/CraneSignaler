@@ -1,41 +1,28 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle, XCircle, AlertTriangle, Video, Mic } from 'lucide-react';
-
-// --- Mock/Placeholder Implementations ---
-// In a real scenario, you would import your actual CameraView and AI logic.
-const CameraView = ({ onResults, style }) => (
-  <div style={style} className="bg-black flex items-center justify-center text-white">
-    <p>CameraView Placeholder</p>
-  </div>
-);
-
-// This mock hook simulates voice recognition.
-const useVoiceManager = (onWordDetected) => {
-  const listen = () => {
-    console.log("VoiceManager: Listening for 'Ready'...");
-    // Simulate successful detection after 3 seconds
-    setTimeout(() => {
-      console.log("VoiceManager: Detected 'Ready'!");
-      onWordDetected('ready');
-    }, 3000);
-  };
-  return { listen };
-};
-// --- End Mocks ---
+import { CheckCircle, XCircle, AlertTriangle, Video, Mic, Loader } from 'lucide-react';
+import CameraView from '../../../components/CameraView';
+import { MediaContext } from '/src/hooks/MediaProvider.jsx';
 
 const TechCheck = () => {
   const navigate = useNavigate();
   const [checks, setChecks] = useState({
     permissions: 'pending', // 'pending', 'granted', 'denied'
     orientation: 'pending', // 'pending', 'ok'
-    bodyVisible: 'pending', // 'pending', 'ok', 'adjust'
+    bodyVisible: 'pending', // 'pending', 'acquiring', 'ok'
     mic: 'pending', // 'pending', 'listening', 'verified'
+    finalConfirmation: 'pending', // 'pending', 'listening'
   });
 
-  const allChecksPassed = Object.values(checks).every(status => status === 'ok' || status === 'granted' || status === 'verified');
+  const preChecksPassed =
+    (checks.permissions === 'granted') &&
+    (checks.orientation === 'ok') &&
+    (checks.bodyVisible === 'ok') &&
+    (checks.mic === 'verified');
 
-  // 1. Permissions Check
+  // --- CONTEXT ---
+  const { webcamRef, canvasRef, isLoaded, bodyVisibleStatus, speechText, setIsListening, stopSpeech } = useContext(MediaContext);
+  
   useEffect(() => {
     const requestPermissions = async () => {
       try {
@@ -61,47 +48,44 @@ const TechCheck = () => {
     }
   }, []);
 
-  // 3. Body Visibility Check (simulated)
-  const handlePoseResults = (results) => {
-    // Placeholder: In your real app, you'd get this from your AI `signals.js`
-    const isVisible = (landmark) => landmark && landmark.visibility > 0.8;
-
-    const { poseLandmarks } = results;
-    if (poseLandmarks &&
-        isVisible(poseLandmarks[11]) && // left_shoulder
-        isVisible(poseLandmarks[12]) && // right_shoulder
-        isVisible(poseLandmarks[15]) && // left_wrist
-        isVisible(poseLandmarks[16])) { // right_wrist
-      setChecks(prev => ({ ...prev, bodyVisible: 'ok' }));
-    } else {
-      setChecks(prev => ({ ...prev, bodyVisible: 'adjust' }));
-    }
-  };
-
-  // Simulate receiving AI results when permissions are granted
+  // Update component state based on the pose detector hook's output
   useEffect(() => {
-    if (checks.permissions === 'granted') {
-      // Simulate a failed check first
-      handlePoseResults({ poseLandmarks: [] });
-      // Simulate a successful check after 2 seconds
-      const timer = setTimeout(() => handlePoseResults({
-        poseLandmarks: { 11: {visibility: 0.9}, 12: {visibility: 0.9}, 15: {visibility: 0.9}, 16: {visibility: 0.9} }
-      }), 2000);
-      return () => clearTimeout(timer);
+    // Update the check status for the UI list
+    if (isLoaded) {
+      setChecks(prev => ({ ...prev, bodyVisible: bodyVisibleStatus }));
     }
-  }, [checks.permissions]);
+  }, [isLoaded, bodyVisibleStatus]);
 
-  // 4. Microphone Check
-  const { listen } = useVoiceManager((word) => {
-    if (word.toLowerCase() === 'ready') {
+  // 4. Microphone Check (now automatic)
+  useEffect(() => {
+    // Automatically start mic check once user is in position and mic hasn't been checked yet.
+    if (checks.bodyVisible === 'ok' && checks.mic === 'pending') {
+      setChecks(prev => ({ ...prev, mic: 'listening' }));
+    }
+  }, [checks.bodyVisible, checks.mic]);
+
+  // 5. Final Confirmation (Voice Command to Start)
+  useEffect(() => {
+    if (preChecksPassed) {
+      // All checks are done, now listen for the "Begin" command.
+      setChecks(prev => ({ ...prev, finalConfirmation: 'listening' }));
+    }
+  }, [preChecksPassed]);
+
+  // Centralized Speech Recognition Logic
+  useEffect(() => {
+    setIsListening(checks.mic === 'listening' || checks.finalConfirmation === 'listening');
+  }, [checks.mic, checks.finalConfirmation, setIsListening]);
+
+  useEffect(() => {
+    if (checks.mic === 'listening' && speechText.toLowerCase().includes('ready')) {
       setChecks(prev => ({ ...prev, mic: 'verified' }));
     }
-  });
-
-  const startMicCheck = () => {
-    setChecks(prev => ({ ...prev, mic: 'listening' }));
-    listen();
-  };
+    if (checks.finalConfirmation === 'listening' && speechText.toLowerCase().includes('begin')) {
+      stopSpeech(); // Now we can stop listening
+      navigate('/level-map');
+    }
+  }, [speechText, checks.mic, checks.finalConfirmation, stopSpeech, navigate]);
 
   const CheckItem = ({ status, text, Icon }) => {
     const statusMap = {
@@ -110,8 +94,9 @@ const TechCheck = () => {
       ok: { color: 'text-green-400', icon: <CheckCircle className="w-5 h-5" /> },
       verified: { color: 'text-green-400', icon: <CheckCircle className="w-5 h-5" /> },
       denied: { color: 'text-red-400', icon: <XCircle className="w-5 h-5" /> },
-      adjust: { color: 'text-yellow-400', icon: <AlertTriangle className="w-5 h-5 animate-pulse" /> },
+      acquiring: { color: 'text-yellow-400', icon: <Loader className="w-5 h-5 animate-spin" /> },
       listening: { color: 'text-blue-400', icon: <Mic className="w-5 h-5 animate-pulse" /> },
+      'final-listening': { color: 'text-green-400', icon: <CheckCircle className="w-5 h-5" /> },
     };
     return (
       <li className={`flex items-center space-x-3 ${statusMap[status]?.color || 'text-slate-400'}`}>
@@ -124,7 +109,7 @@ const TechCheck = () => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
       <div className="relative aspect-video">
-        <CameraView style={{ width: '100%', height: '100%', borderRadius: '0.5rem' }} onResults={handlePoseResults} />
+        <CameraView ref={{ webcamRef, canvasRef }} isLoaded={isLoaded} />
       </div>
       <div>
         <h2 className="text-2xl font-semibold mb-4">System Check</h2>
@@ -132,22 +117,26 @@ const TechCheck = () => {
           <CheckItem status={checks.permissions} text="Allow camera & microphone" Icon={Video} />
           <CheckItem status={checks.orientation} text="Use landscape orientation on mobile" Icon={AlertTriangle} />
           <CheckItem status={checks.bodyVisible} text="Upper body is visible in frame" Icon={Video} />
-          <CheckItem status={checks.mic} text="Microphone is working" Icon={Mic} />
+          <CheckItem 
+            status={checks.mic} 
+            text={checks.mic === 'listening' ? "Say 'Ready'..." : "Microphone is working"} 
+            Icon={Mic} 
+          />
         </ul>
-        {checks.bodyVisible === 'adjust' && <p className="text-yellow-400 mt-4">Please stand back so your shoulders and hands are visible.</p>}
+        {checks.bodyVisible === 'acquiring' && <p className="text-yellow-400 mt-4">Acquiring pose... Please stand back so your shoulders and hands are visible.</p>}
         {checks.permissions === 'denied' && <p className="text-red-400 mt-4">Permissions are required. Please enable them in your browser settings and refresh the page.</p>}
-
-        {checks.permissions === 'granted' && checks.mic === 'pending' && (
-          <button onClick={startMicCheck} className="mt-6 w-full px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500">Test Microphone</button>
+        
+        {preChecksPassed && (
+          <div className="mt-6 text-center p-4 rounded-lg bg-green-500/10 border border-green-500">
+            <p className="text-xl font-bold text-green-300 animate-pulse">All systems go! Say "Begin" to start.</p>
+          </div>
         )}
 
         <button
           onClick={() => navigate('/level-map')}
-          disabled={!allChecksPassed}
-          className="mt-6 w-full px-4 py-3 rounded-lg font-bold text-xl bg-green-600 hover:bg-green-500 disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors"
-        >
-          Start Learning
-        </button>
+          disabled={!preChecksPassed}
+          className="mt-6 w-full px-4 py-3 rounded-lg font-bold text-xl bg-green-600 hover:bg-green-500 disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors hidden"
+        >Start Learning</button>
       </div>
     </div>
   );
