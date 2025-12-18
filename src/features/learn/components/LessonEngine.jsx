@@ -75,6 +75,57 @@ const ScenarioChallenge = ({ challenge, onComplete, onFailure }) => {
     );
 };
 
+const IdentifySignalChallenge = ({ challenge, onComplete, onFailure }) => {
+    const handleOptionClick = (option) => {
+        if (option === challenge.answer) {
+            onComplete(75); // Award 75 XP for correct identification
+        } else {
+            onFailure("Incorrect answer");
+        }
+    };
+
+    return (
+        <div className="flex flex-col items-center gap-4">
+            <img src={challenge.image} alt={challenge.prompt} className="rounded-lg border-4 border-slate-600 max-w-md mb-4" />
+            <p className="text-xl text-center mb-4">{challenge.prompt}</p>
+            <div className="grid grid-cols-2 gap-4">
+                {challenge.options.map((option) => (
+                    <button
+                        key={option}
+                        onClick={() => handleOptionClick(option)}
+                        className="px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
+                    >
+                        {option}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+const VoiceCommandChallenge = ({ challenge, onComplete, onFailure }) => {
+    const { speechText, setIsListening, stopSpeech } = useContext(MediaContext);
+
+    useEffect(() => {
+        setIsListening(true);
+        if (speechText.toLowerCase().includes(challenge.answer.toLowerCase())) {
+            stopSpeech();
+            onComplete(50); // Award 50 XP
+        }
+        return () => setIsListening(false); // Stop listening when component unmounts
+    }, [speechText, challenge.answer, onComplete, setIsListening, stopSpeech]);
+
+    return (
+        <div className="flex flex-col items-center gap-4 text-center">
+            <p className="text-xl mt-4">{challenge.prompt}</p>
+            <div className="mt-2 p-4 bg-slate-900 rounded-lg w-full max-w-sm">
+                <p className="font-mono text-lg text-cyan-300 animate-pulse">Listening...</p>
+                <p className="font-mono text-slate-400 h-6">{speechText}</p>
+            </div>
+        </div>
+    );
+};
+
 // --- Main Engine ---
 
 const LessonEngine = ({ lessonData }) => {

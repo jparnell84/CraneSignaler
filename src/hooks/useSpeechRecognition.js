@@ -83,7 +83,14 @@ const useSpeechRecognition = (isListening) => {
     }
   }, [isListening, isSupported]);
 
-  return { text, confidence, isSupported };
+  const stop = useCallback(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current.abort();
+    }
+  }, []);
+
+  return { text, confidence, isSupported, stop };
 };
 
 export default useSpeechRecognition;
